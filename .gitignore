@@ -1,0 +1,15 @@
+node_modules
+.next
+dist
+coverage
+.turbo
+.env
+.env.local
+.DS_Store
+*.log
+*.tsbuildinfo
+.local
+packages/*/src/**/*.js
+packages/*/src/**/*.d.ts
+packages/*/src/**/*.d.ts.map
+docker/postgres-data

@@ -1,0 +1,31 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "resolveJsonModule": true,
+    "allowSyntheticDefaultImports": true,
+    "esModuleInterop": true,
+    "strict": true,
+    "noImplicitOverride": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": true,
+    "baseUrl": ".",
+    "paths": {
+      "@knowledgeos/shared": ["packages/shared/src/index.ts"],
+      "@knowledgeos/shared/*": ["packages/shared/src/*.ts"],
+      "@knowledgeos/database": ["packages/database/src/index.ts"],
+      "@knowledgeos/ingestion": ["packages/ingestion/src/index.ts"],
+      "@knowledgeos/knowledge-compiler": ["packages/knowledge-compiler/src/index.ts"],
+      "@knowledgeos/retrieval": ["packages/retrieval/src/index.ts"],
+      "@knowledgeos/context-engine": ["packages/context-engine/src/index.ts"],
+      "@knowledgeos/evaluation": ["packages/evaluation/src/index.ts"],
+      "@knowledgeos/okf": ["packages/okf/src/index.ts"],
+      "@knowledgeos/graph": ["packages/graph/src/index.ts"],
+      "@knowledgeos/sdk": ["packages/sdk/src/index.ts"]
+    }
+  }
+}

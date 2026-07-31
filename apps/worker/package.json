@@ -1,0 +1,20 @@
+{
+  "name": "@knowledgeos/worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --passWithNoTests"
+  },
+  "dependencies": {
+    "@knowledgeos/database": "workspace:*",
+    "@knowledgeos/knowledge-compiler": "workspace:*",
+    "@knowledgeos/retrieval": "workspace:*",
+    "@knowledgeos/shared": "workspace:*",
+    "zod": "^3.24.1"
+  }
+}
+
