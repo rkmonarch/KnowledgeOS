@@ -109,6 +109,19 @@ export interface SourceRevisionWithSections {
   }>;
 }
 
+export interface SourceSectionForExtractionRecord {
+  workspaceId: string;
+  sourceId: string;
+  sourceName: string;
+  sourceRevisionId: string;
+  sourceSectionId: string;
+  headingPath: string[];
+  title: string;
+  body: string;
+  startLine: number;
+  endLine: number;
+}
+
 export interface PersistClaimInput {
   text: string;
   confidence: number;
@@ -450,6 +463,41 @@ export class KnowledgeRepository {
         contentHash: section.contentHash
       }))
     };
+  }
+
+  async getSourceSectionForExtraction(input: {
+    sourceRevisionId: string;
+    sourceSectionId: string;
+  }): Promise<SourceSectionForExtractionRecord> {
+    const [row] = await this.db
+      .select({
+        workspaceId: sources.workspaceId,
+        sourceId: sources.id,
+        sourceName: sources.name,
+        sourceRevisionId: sourceRevisions.id,
+        sourceSectionId: sourceSections.id,
+        headingPath: sourceSections.headingPath,
+        title: sourceSections.title,
+        body: sourceSections.body,
+        startLine: sourceSections.startLine,
+        endLine: sourceSections.endLine
+      })
+      .from(sourceSections)
+      .innerJoin(sourceRevisions, eq(sourceRevisions.id, sourceSections.sourceRevisionId))
+      .innerJoin(sources, eq(sources.id, sourceRevisions.sourceId))
+      .where(
+        and(
+          eq(sourceRevisions.id, input.sourceRevisionId),
+          eq(sourceSections.id, input.sourceSectionId)
+        )
+      )
+      .limit(1);
+
+    if (!row) {
+      throw new NotFoundError("Source section was not found for extraction", input);
+    }
+
+    return row;
   }
 
   async persistExtraction(input: PersistExtractionInput): Promise<PersistExtractionResult> {

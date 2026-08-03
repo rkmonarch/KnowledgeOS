@@ -49,6 +49,12 @@ pnpm dev
 
 The dashboard and HTTP API run from `apps/web` on `http://localhost:3000`. The worker remains a separate process because extraction and embedding are background jobs.
 
+## Extraction Jobs
+
+Markdown ingestion creates a source-revision extraction coordinator job. The worker expands that coordinator into one extraction job per non-empty source section, then persists each section independently.
+
+This avoids the all-or-nothing failure mode where one bad LLM response blocks every concept from a long document.
+
 ## Groq Extraction
 
 KnowledgeOS can use Groq for concept and claim extraction:

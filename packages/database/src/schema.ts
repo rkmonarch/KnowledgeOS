@@ -42,6 +42,7 @@ export const relationshipTypeEnum = pgEnum("relationship_type", [
 ]);
 export const jobTypeEnum = pgEnum("job_type", [
   "extract_concepts_from_source_revision",
+  "extract_concepts_from_source_section",
   "embed_concept",
   "embed_claim"
 ]);
@@ -322,4 +323,3 @@ export type SourceSectionRow = typeof sourceSections.$inferSelect;
 export type ConceptRow = typeof concepts.$inferSelect;
 export type ClaimRow = typeof claims.$inferSelect;
 export type JobRow = typeof jobs.$inferSelect;
-

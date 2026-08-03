@@ -4,14 +4,27 @@ import {
   type Logger,
   createConsoleLogger,
   embeddingJobPayloadSchema,
-  extractionJobPayloadSchema
+  extractionJobPayloadSchema,
+  sourceSectionExtractionJobPayloadSchema
 } from "@knowledgeos/shared";
 import { type KnowledgeRepository } from "@knowledgeos/database";
-import { compileSourceRevision, type JsonLlmProvider } from "@knowledgeos/knowledge-compiler";
-import { embedEntity, type EmbeddingProvider } from "@knowledgeos/retrieval";
+import { extractKnowledgeFromSection, type JsonLlmProvider } from "@knowledgeos/knowledge-compiler";
+import { embedEntity, type EmbeddingProvider, type RetrievalRepository } from "@knowledgeos/retrieval";
+
+type WorkerRepository = Pick<
+  KnowledgeRepository,
+  | "claimNextJob"
+  | "completeJob"
+  | "enqueueJob"
+  | "failJob"
+  | "getSourceRevisionWithSections"
+  | "getSourceSectionForExtraction"
+  | "persistExtraction"
+> &
+  RetrievalRepository;
 
 export interface WorkerOptions {
-  repository: KnowledgeRepository;
+  repository: WorkerRepository;
   llmProvider: JsonLlmProvider;
   embeddingProvider: EmbeddingProvider;
   logger?: Logger;
@@ -38,7 +51,7 @@ export async function runWorkerOnce(options: WorkerOptions): Promise<boolean> {
   const logger = options.logger ?? createConsoleLogger("worker");
   const workerId = options.workerId ?? `${hostname()}-${process.pid}`;
   const job = await options.repository.claimNextJob(
-    ["extract_concepts_from_source_revision", "embed_concept", "embed_claim"],
+    ["extract_concepts_from_source_revision", "extract_concepts_from_source_section", "embed_concept", "embed_claim"],
     workerId
   );
 
@@ -56,56 +69,67 @@ export async function runWorkerOnce(options: WorkerOptions): Promise<boolean> {
     if (job.type === "extract_concepts_from_source_revision") {
       const payload = extractionJobPayloadSchema.parse(job.payload);
       const revision = await options.repository.getSourceRevisionWithSections(payload.sourceRevisionId);
-      const compiled = await compileSourceRevision(
-        {
-          workspaceId: payload.workspaceId,
-          sourceId: revision.source.id,
-          sourceName: revision.source.name,
-          sourceRevisionId: revision.revision.id,
-          sections: revision.sections.map((section) => ({
-            workspaceId: payload.workspaceId,
-            sourceId: revision.source.id,
-            sourceName: revision.source.name,
-            sourceRevisionId: revision.revision.id,
-            sourceSectionId: section.id,
-            headingPath: section.headingPath,
-            title: section.title,
-            body: section.body,
-            startLine: section.startLine,
-            endLine: section.endLine
-          }))
-        },
-        {
-          llm: options.llmProvider,
-          logger
+
+      let queuedSectionJobs = 0;
+      for (const section of revision.sections) {
+        if (section.body.trim().length === 0) {
+          continue;
         }
-      );
 
-      const persisted = await options.repository.persistExtraction(compiled);
-
-      for (const conceptId of persisted.conceptIds) {
         await options.repository.enqueueJob({
           workspaceId: payload.workspaceId,
-          type: "embed_concept",
+          type: "extract_concepts_from_source_section",
           payload: {
             workspaceId: payload.workspaceId,
-            entityType: "concept",
-            entityId: conceptId
+            sourceRevisionId: payload.sourceRevisionId,
+            sourceSectionId: section.id
           },
-          idempotencyKey: `embed:concept:${conceptId}:revision:${payload.sourceRevisionId}`
+          idempotencyKey: `extract:section:${section.id}`,
+          maxAttempts: 5
         });
+        queuedSectionJobs += 1;
       }
 
-      for (const claimId of persisted.claimIds) {
-        await options.repository.enqueueJob({
+      logger.info("Queued source section extraction jobs", {
+        sourceRevisionId: payload.sourceRevisionId,
+        queuedSectionJobs
+      });
+    } else if (job.type === "extract_concepts_from_source_section") {
+      const payload = sourceSectionExtractionJobPayloadSchema.parse(job.payload);
+      const section = await options.repository.getSourceSectionForExtraction({
+        sourceRevisionId: payload.sourceRevisionId,
+        sourceSectionId: payload.sourceSectionId
+      });
+
+      if (section.body.trim().length === 0) {
+        logger.info("Skipped empty source section extraction", {
+          sourceRevisionId: payload.sourceRevisionId,
+          sourceSectionId: payload.sourceSectionId
+        });
+      } else {
+        logger.info("Extracting knowledge from source section", {
+          sourceRevisionId: payload.sourceRevisionId,
+          sourceSectionId: payload.sourceSectionId,
+          llmProvider: options.llmProvider.name
+        });
+
+        const concepts = await extractKnowledgeFromSection(section, {
+          llm: options.llmProvider,
+          logger
+        });
+        const persisted = await options.repository.persistExtraction({
           workspaceId: payload.workspaceId,
-          type: "embed_claim",
-          payload: {
-            workspaceId: payload.workspaceId,
-            entityType: "claim",
-            entityId: claimId
-          },
-          idempotencyKey: `embed:claim:${claimId}:revision:${payload.sourceRevisionId}`
+          sourceRevisionId: payload.sourceRevisionId,
+          concepts
+        });
+
+        await enqueueEmbeddingJobs({
+          repository: options.repository,
+          workspaceId: payload.workspaceId,
+          sourceRevisionId: payload.sourceRevisionId,
+          sourceSectionId: payload.sourceSectionId,
+          conceptIds: persisted.conceptIds,
+          claimIds: persisted.claimIds
         });
       }
     } else {
@@ -134,9 +158,43 @@ export async function runWorkerOnce(options: WorkerOptions): Promise<boolean> {
   }
 }
 
+async function enqueueEmbeddingJobs(input: {
+  repository: WorkerRepository;
+  workspaceId: string;
+  sourceRevisionId: string;
+  sourceSectionId: string;
+  conceptIds: string[];
+  claimIds: string[];
+}): Promise<void> {
+  for (const conceptId of input.conceptIds) {
+    await input.repository.enqueueJob({
+      workspaceId: input.workspaceId,
+      type: "embed_concept",
+      payload: {
+        workspaceId: input.workspaceId,
+        entityType: "concept",
+        entityId: conceptId
+      },
+      idempotencyKey: `embed:concept:${conceptId}:section:${input.sourceSectionId}`
+    });
+  }
+
+  for (const claimId of input.claimIds) {
+    await input.repository.enqueueJob({
+      workspaceId: input.workspaceId,
+      type: "embed_claim",
+      payload: {
+        workspaceId: input.workspaceId,
+        entityType: "claim",
+        entityId: claimId
+      },
+      idempotencyKey: `embed:claim:${claimId}:section:${input.sourceSectionId}`
+    });
+  }
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => {
     setTimeout(resolve, ms);
   });
 }
-
