@@ -367,10 +367,256 @@ h3 {
   white-space: nowrap;
 }
 
+.jobPanel {
+  display: grid;
+  gap: 12px;
+  margin-top: 16px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-muted);
+}
+
+.jobPanelHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.eyebrow {
+  display: block;
+  margin-bottom: 3px;
+  color: var(--subtle);
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.jobSummary {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.jobSummary span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.jobSummary svg {
+  color: var(--accent);
+  flex: 0 0 auto;
+}
+
+.dangerText,
+.dangerText svg {
+  color: var(--red) !important;
+}
+
+.jobProgressTrack {
+  width: 100%;
+  height: 8px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--surface-strong);
+}
+
+.jobProgressBar {
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+  transition: width 180ms ease;
+}
+
+.jobList {
+  display: grid;
+  gap: 8px;
+}
+
+.jobRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: #fff;
+}
+
+.jobTitle {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 800;
+  line-height: 1.25;
+}
+
+.jobMeta,
+.jobError {
+  margin-top: 4px;
+  font-size: 12px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.jobMeta {
+  color: var(--subtle);
+}
+
+.jobError {
+  color: var(--red);
+}
+
+.jobStatus {
+  min-height: 24px;
+  padding: 4px 7px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 900;
+  line-height: 1.4;
+  text-transform: capitalize;
+  white-space: nowrap;
+}
+
+.jobStatus.queued {
+  background: var(--surface-strong);
+  color: var(--muted);
+}
+
+.jobStatus.running {
+  background: var(--amber-soft);
+  color: var(--amber);
+}
+
+.jobStatus.completed {
+  background: var(--green-soft);
+  color: #067647;
+}
+
+.jobStatus.failed {
+  background: var(--red-soft);
+  color: var(--red);
+}
+
+.emptyState.compact {
+  min-height: 44px;
+  padding: 10px;
+}
+
 .conceptList,
 .resultList {
   display: grid;
   gap: 10px;
+}
+
+.conceptDetail {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 14px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-muted);
+}
+
+.detailHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.detailBody {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.48;
+}
+
+.detailMetaRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.detailMetaRow span {
+  min-height: 24px;
+  max-width: 100%;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: #fff;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.claimSection {
+  display: grid;
+  gap: 9px;
+}
+
+.claimSectionHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.claimSectionHeader strong {
+  color: var(--text);
+  font-size: 13px;
+}
+
+.claimList {
+  display: grid;
+  gap: 8px;
+}
+
+.claimRow {
+  display: grid;
+  gap: 7px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: #fff;
+}
+
+.claimText {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 750;
+  line-height: 1.38;
+}
+
+.claimFooter {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  color: var(--subtle);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.claimRow blockquote {
+  margin: 0;
+  padding-left: 9px;
+  border-left: 3px solid var(--line-strong);
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
 }
 
 .conceptRow,
@@ -385,6 +631,20 @@ h3 {
 
 .conceptRow {
   grid-template-columns: minmax(0, 1fr) auto;
+  width: 100%;
+  color: inherit;
+  text-align: left;
+}
+
+.conceptRow:hover,
+.conceptRow.selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(15, 118, 110, 0.08);
+}
+
+.conceptRow:focus-visible {
+  outline: 3px solid rgba(15, 118, 110, 0.16);
+  outline-offset: 2px;
 }
 
 .resultRow {
@@ -518,7 +778,7 @@ h3 {
 
   .metricStrip {
     display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(4, minmax(0, 1fr));
   }
 
   .workspaceGrid {

@@ -51,6 +51,22 @@ export type JobType = z.infer<typeof jobTypeSchema>;
 export const jobStatusSchema = z.enum(["queued", "running", "completed", "failed"]);
 export type JobStatus = z.infer<typeof jobStatusSchema>;
 
+export const jobRecordSchema = z.object({
+  id: z.string().uuid(),
+  workspaceId: z.string().uuid(),
+  type: jobTypeSchema,
+  status: jobStatusSchema,
+  attempts: z.number().int().nonnegative(),
+  maxAttempts: z.number().int().positive(),
+  runAfter: z.string().datetime(),
+  lockedAt: z.string().datetime().nullable(),
+  lockedBy: z.string().nullable(),
+  lastError: z.string().nullable(),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime()
+});
+export type JobRecord = z.infer<typeof jobRecordSchema>;
+
 export const embeddableEntityTypeSchema = z.enum(["concept", "claim"]);
 export type EmbeddableEntityType = z.infer<typeof embeddableEntityTypeSchema>;
 
@@ -158,6 +174,17 @@ export const listConceptsResponseSchema = z.object({
   concepts: z.array(conceptRecordSchema)
 });
 export type ListConceptsResponse = z.infer<typeof listConceptsResponseSchema>;
+
+export const conceptDetailResponseSchema = z.object({
+  concept: conceptRecordSchema,
+  claims: z.array(claimRecordSchema)
+});
+export type ConceptDetailResponse = z.infer<typeof conceptDetailResponseSchema>;
+
+export const listJobsResponseSchema = z.object({
+  jobs: z.array(jobRecordSchema)
+});
+export type ListJobsResponse = z.infer<typeof listJobsResponseSchema>;
 
 export const workspaceRecordSchema = z.object({
   id: z.string().uuid(),

@@ -1,13 +1,17 @@
 import {
+  type ConceptDetailResponse,
   type IngestMarkdownRequest,
   type IngestMarkdownResponse,
   type ListConceptsResponse,
+  type ListJobsResponse,
   type SearchRequest,
   type SearchResponse,
   apiErrorResponseSchema,
+  conceptDetailResponseSchema,
   defaultWorkspaceResponseSchema,
   ingestMarkdownResponseSchema,
   listConceptsResponseSchema,
+  listJobsResponseSchema,
   searchResponseSchema
 } from "@knowledgeos/shared/domain";
 import type { z } from "zod";
@@ -38,6 +42,30 @@ export class KnowledgeOSClient {
     return this.request(`/concepts?workspaceId=${encodeURIComponent(workspaceId)}`, {
       method: "GET",
       schema: listConceptsResponseSchema
+    });
+  }
+
+  async getConceptDetail(workspaceId: string, conceptId: string): Promise<ConceptDetailResponse> {
+    const searchParams = new URLSearchParams({
+      workspaceId,
+      conceptId
+    });
+
+    return this.request(`/concepts/detail?${searchParams.toString()}`, {
+      method: "GET",
+      schema: conceptDetailResponseSchema
+    });
+  }
+
+  async listJobs(workspaceId: string, limit = 50): Promise<ListJobsResponse> {
+    const searchParams = new URLSearchParams({
+      workspaceId,
+      limit: limit.toString()
+    });
+
+    return this.request(`/jobs?${searchParams.toString()}`, {
+      method: "GET",
+      schema: listJobsResponseSchema
     });
   }
 

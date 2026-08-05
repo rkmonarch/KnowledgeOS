@@ -7,6 +7,7 @@ import {
   type ConceptStatus,
   type ConceptType,
   type EmbeddableEntityType,
+  type JobRecord,
   type JobStatus,
   type JobType,
   type Metadata,
@@ -409,6 +410,43 @@ export class KnowledgeRepository {
         updated_at = now()
       where id = ${jobId}
     `);
+  }
+
+  async listJobs(workspaceId: string, limit = 50): Promise<JobRecord[]> {
+    const rows = await this.db
+      .select({
+        id: jobs.id,
+        workspaceId: jobs.workspaceId,
+        type: jobs.type,
+        status: jobs.status,
+        attempts: jobs.attempts,
+        maxAttempts: jobs.maxAttempts,
+        runAfter: jobs.runAfter,
+        lockedAt: jobs.lockedAt,
+        lockedBy: jobs.lockedBy,
+        lastError: jobs.lastError,
+        createdAt: jobs.createdAt,
+        updatedAt: jobs.updatedAt
+      })
+      .from(jobs)
+      .where(eq(jobs.workspaceId, workspaceId))
+      .orderBy(desc(jobs.updatedAt), desc(jobs.createdAt))
+      .limit(limit);
+
+    return rows.map((row) => ({
+      id: row.id,
+      workspaceId: row.workspaceId,
+      type: jobTypeSchema.parse(row.type),
+      status: jobStatusSchema.parse(row.status),
+      attempts: row.attempts,
+      maxAttempts: row.maxAttempts,
+      runAfter: row.runAfter.toISOString(),
+      lockedAt: row.lockedAt?.toISOString() ?? null,
+      lockedBy: row.lockedBy,
+      lastError: row.lastError,
+      createdAt: row.createdAt.toISOString(),
+      updatedAt: row.updatedAt.toISOString()
+    }));
   }
 
   async getSourceRevisionWithSections(sourceRevisionId: string): Promise<SourceRevisionWithSections> {

@@ -1,9 +1,9 @@
 "use client";
 
-import { AlertCircle, CheckCircle2, Database, FileText, RefreshCw, Search, Send, UploadCloud } from "lucide-react";
+import { Activity, AlertCircle, CheckCircle2, Clock, Database, FileText, RefreshCw, Search, Send, UploadCloud } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { createKnowledgeOSClient } from "@knowledgeos/sdk";
-import type { ConceptRecord, RetrievalResult } from "@knowledgeos/shared/domain";
+import type { ConceptDetailResponse, ConceptRecord, JobRecord, RetrievalResult, SourceCitation } from "@knowledgeos/shared/domain";
 
 const apiUrl = "/api";
 
@@ -23,16 +23,54 @@ export default function DashboardPage() {
   const [sourceName, setSourceName] = useState("Architecture.md");
   const [markdown, setMarkdown] = useState(sampleMarkdown);
   const [concepts, setConcepts] = useState<ConceptRecord[]>([]);
+  const [selectedConceptId, setSelectedConceptId] = useState<string | null>(null);
+  const [conceptDetail, setConceptDetail] = useState<ConceptDetailResponse | null>(null);
+  const [isLoadingConcept, setIsLoadingConcept] = useState(false);
+  const [jobs, setJobs] = useState<JobRecord[]>([]);
   const [query, setQuery] = useState("How does authentication work?");
   const [results, setResults] = useState<RetrievalResult[]>([]);
   const [status, setStatus] = useState("Connecting");
   const [connectionState, setConnectionState] = useState<"checking" | "online" | "offline">("checking");
   const [isBusy, setIsBusy] = useState(false);
   const markdownStats = useMemo(() => getTextStats(markdown), [markdown]);
+  const jobStats = useMemo(() => summarizeJobs(jobs), [jobs]);
+  const activeJobCount = jobStats.queued + jobStats.running;
 
   useEffect(() => {
     void initialize();
   }, []);
+
+  useEffect(() => {
+    if (concepts.length === 0) {
+      setSelectedConceptId(null);
+      setConceptDetail(null);
+      return;
+    }
+
+    if (!selectedConceptId || !concepts.some((concept) => concept.id === selectedConceptId)) {
+      setSelectedConceptId(concepts[0]?.id ?? null);
+    }
+  }, [concepts, selectedConceptId]);
+
+  useEffect(() => {
+    if (!workspaceId || !selectedConceptId) {
+      return;
+    }
+
+    void loadConceptDetail(workspaceId, selectedConceptId);
+  }, [workspaceId, selectedConceptId]);
+
+  useEffect(() => {
+    if (!workspaceId) {
+      return;
+    }
+
+    const intervalId = window.setInterval(() => {
+      void refreshDashboard(workspaceId);
+    }, 5_000);
+
+    return () => window.clearInterval(intervalId);
+  }, [workspaceId]);
 
   async function initialize(): Promise<void> {
     try {
@@ -40,11 +78,19 @@ export default function DashboardPage() {
       setWorkspaceId(response.workspace.id);
       setStatus(`Workspace: ${response.workspace.name}`);
       setConnectionState("online");
-      await refreshConcepts(response.workspace.id);
+      await refreshDashboard(response.workspace.id);
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "API connection failed");
       setConnectionState("offline");
     }
+  }
+
+  async function refreshDashboard(id = workspaceId): Promise<void> {
+    if (!id) {
+      return;
+    }
+
+    await Promise.all([refreshConcepts(id), refreshJobs(id)]);
   }
 
   async function refreshConcepts(id = workspaceId): Promise<void> {
@@ -53,6 +99,31 @@ export default function DashboardPage() {
     }
     const response = await client.listConcepts(id);
     setConcepts(response.concepts);
+  }
+
+  async function refreshJobs(id = workspaceId): Promise<void> {
+    if (!id) {
+      return;
+    }
+    const response = await client.listJobs(id, 30);
+    setJobs(response.jobs);
+  }
+
+  async function loadConceptDetail(id = workspaceId, conceptId = selectedConceptId): Promise<void> {
+    if (!id || !conceptId) {
+      return;
+    }
+
+    setIsLoadingConcept(true);
+    setConceptDetail(null);
+    try {
+      const response = await client.getConceptDetail(id, conceptId);
+      setConceptDetail(response);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Concept detail failed");
+    } finally {
+      setIsLoadingConcept(false);
+    }
   }
 
   async function submitMarkdown(): Promise<void> {
@@ -75,7 +146,7 @@ export default function DashboardPage() {
           ? `Queued ${response.sectionCount} section${response.sectionCount === 1 ? "" : "s"}`
           : "No source changes detected"
       );
-      await refreshConcepts(workspaceId);
+      await refreshDashboard(workspaceId);
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Ingestion failed");
     } finally {
@@ -115,7 +186,7 @@ export default function DashboardPage() {
           </div>
           <h1>Knowledge Console</h1>
         </div>
-        <button className="iconButton dark" type="button" onClick={() => void refreshConcepts()} title="Refresh concepts">
+        <button className="iconButton dark" type="button" onClick={() => void refreshDashboard()} title="Refresh dashboard">
           <RefreshCw size={18} />
         </button>
       </header>
@@ -131,6 +202,7 @@ export default function DashboardPage() {
         </div>
         <div className="metricStrip">
           <Metric label="Concepts" value={concepts.length.toString()} />
+          <Metric label="Jobs" value={activeJobCount.toString()} />
           <Metric label="Results" value={results.length.toString()} />
           <Metric label="Lines" value={markdownStats.lines.toString()} />
         </div>
@@ -167,8 +239,11 @@ export default function DashboardPage() {
               <Send size={17} />
               Queue Ingestion
             </button>
-            <span className="inlineState">{workspaceId ? "Ready" : "Waiting for API"}</span>
+            <span className="inlineState">
+              {workspaceId ? (activeJobCount > 0 ? `${activeJobCount} active` : "Ready") : "Waiting for API"}
+            </span>
           </div>
+          <JobMonitor jobs={jobs} stats={jobStats} />
         </section>
 
         <section className="surface conceptsSurface">
@@ -179,6 +254,7 @@ export default function DashboardPage() {
             </div>
             <span className="sectionMeta">{concepts.length}</span>
           </div>
+          {concepts.length > 0 ? <ConceptDetailPanel detail={conceptDetail} isLoading={isLoadingConcept} /> : null}
           <div className="conceptList">
             {concepts.length === 0 ? (
               <div className="emptyState">
@@ -187,7 +263,12 @@ export default function DashboardPage() {
               </div>
             ) : (
               concepts.map((concept) => (
-                <article className="conceptRow" key={concept.id}>
+                <button
+                  className={`conceptRow ${concept.id === selectedConceptId ? "selected" : ""}`}
+                  key={concept.id}
+                  type="button"
+                  onClick={() => setSelectedConceptId(concept.id)}
+                >
                   <div>
                     <div className="rowHeader">
                       <h3>{concept.title}</h3>
@@ -206,7 +287,7 @@ export default function DashboardPage() {
                       ? `${concept.citations[0].sourceName}:${concept.citations[0].startLine}-${concept.citations[0].endLine}`
                       : "No citation"}
                   </div>
-                </article>
+                </button>
               ))
             )}
           </div>
@@ -272,6 +353,172 @@ function Metric({ label, value }: Readonly<{ label: string; value: string }>) {
       <strong>{value}</strong>
     </div>
   );
+}
+
+function ConceptDetailPanel({
+  detail,
+  isLoading
+}: Readonly<{ detail: ConceptDetailResponse | null; isLoading: boolean }>) {
+  if (!detail) {
+    return (
+      <div className="conceptDetail">
+        <div className="emptyState compact">
+          <FileText size={17} />
+          <span>{isLoading ? "Loading concept" : "Select a concept"}</span>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <article className="conceptDetail">
+      <div className="detailHeader">
+        <div>
+          <span className="eyebrow">Selected Concept</span>
+          <h3>{detail.concept.title}</h3>
+        </div>
+        <span className="confidence">{Math.round(detail.concept.confidence * 100)}%</span>
+      </div>
+      <p className="detailBody">{detail.concept.body}</p>
+      <div className="detailMetaRow">
+        <span>{detail.concept.type}</span>
+        <span>{detail.concept.status}</span>
+        {detail.concept.citations[0] ? <span>{formatCitation(detail.concept.citations[0])}</span> : null}
+      </div>
+      <div className="claimSection">
+        <div className="claimSectionHeader">
+          <span>Claims</span>
+          <strong>{detail.claims.length}</strong>
+        </div>
+        <div className="claimList">
+          {detail.claims.length === 0 ? (
+            <div className="emptyState compact">
+              <FileText size={17} />
+              <span>No claims extracted</span>
+            </div>
+          ) : (
+            detail.claims.slice(0, 5).map((claim) => (
+              <div className="claimRow" key={claim.id}>
+                <div className="claimText">{claim.text}</div>
+                <div className="claimFooter">
+                  <span>{Math.round(claim.confidence * 100)}%</span>
+                  {claim.citations[0] ? <span>{formatCitation(claim.citations[0])}</span> : null}
+                </div>
+                {claim.citations[0]?.quote ? <blockquote>{claim.citations[0].quote}</blockquote> : null}
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+    </article>
+  );
+}
+
+interface JobStats {
+  total: number;
+  queued: number;
+  running: number;
+  completed: number;
+  failed: number;
+}
+
+function JobMonitor({ jobs, stats }: Readonly<{ jobs: JobRecord[]; stats: JobStats }>) {
+  const progress = stats.total === 0 ? 0 : Math.round((stats.completed / stats.total) * 100);
+  const latestJobs = jobs.slice(0, 6);
+
+  return (
+    <div className="jobPanel">
+      <div className="jobPanelHeader">
+        <div>
+          <span className="eyebrow">Pipeline</span>
+          <h3>Pipeline Jobs</h3>
+        </div>
+        <span className="sectionMeta">{stats.total}</span>
+      </div>
+      <div className="jobSummary" aria-label="Job status summary">
+        <span>
+          <Clock size={14} />
+          {stats.queued} queued
+        </span>
+        <span>
+          <Activity size={14} />
+          {stats.running} running
+        </span>
+        <span>
+          <CheckCircle2 size={14} />
+          {stats.completed} done
+        </span>
+        <span className={stats.failed > 0 ? "dangerText" : undefined}>
+          <AlertCircle size={14} />
+          {stats.failed} failed
+        </span>
+      </div>
+      <div className="jobProgressTrack" aria-label={`${progress}% complete`}>
+        <div className="jobProgressBar" style={{ width: `${progress}%` }} />
+      </div>
+      <div className="jobList">
+        {latestJobs.length === 0 ? (
+          <div className="emptyState compact">
+            <FileText size={17} />
+            <span>No jobs yet</span>
+          </div>
+        ) : (
+          latestJobs.map((job) => (
+            <div className="jobRow" key={job.id}>
+              <div>
+                <div className="jobTitle">{formatJobType(job.type)}</div>
+                <div className="jobMeta">
+                  {job.attempts}/{job.maxAttempts} attempts · {formatTime(job.updatedAt)}
+                </div>
+                {job.lastError ? <div className="jobError">{job.lastError}</div> : null}
+              </div>
+              <span className={`jobStatus ${job.status}`}>{job.status}</span>
+            </div>
+          ))
+        )}
+      </div>
+    </div>
+  );
+}
+
+function summarizeJobs(jobs: JobRecord[]): JobStats {
+  const stats: JobStats = { total: 0, queued: 0, running: 0, completed: 0, failed: 0 };
+
+  for (const job of jobs) {
+    stats.total += 1;
+    stats[job.status] += 1;
+  }
+
+  return stats;
+}
+
+function formatJobType(type: JobRecord["type"]): string {
+  switch (type) {
+    case "extract_concepts_from_source_revision":
+      return "Revision extraction";
+    case "extract_concepts_from_source_section":
+      return "Section extraction";
+    case "embed_concept":
+      return "Concept embedding";
+    case "embed_claim":
+      return "Claim embedding";
+  }
+}
+
+function formatTime(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return "unknown";
+  }
+
+  return date.toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit"
+  });
+}
+
+function formatCitation(citation: SourceCitation): string {
+  return `${citation.sourceName}:${citation.startLine}-${citation.endLine}`;
 }
 
 function getTextStats(value: string): { characters: number; lines: number } {
