@@ -32,11 +32,18 @@ export const conceptStatusEnum = pgEnum("concept_status", ["draft", "active", "s
 export const claimStatusEnum = pgEnum("claim_status", ["active", "superseded", "disputed", "archived"]);
 export const relationshipTypeEnum = pgEnum("relationship_type", [
   "depends_on",
+  "used_by",
+  "uses",
   "implements",
+  "part_of",
+  "related_to",
   "replaces",
   "contradicts",
-  "related_to",
-  "part_of",
+  "requires",
+  "produces",
+  "affects",
+  "mitigates",
+  "signed_by",
   "owned_by",
   "documented_in"
 ]);
@@ -249,7 +256,10 @@ export const relationships = pgTable(
       .notNull()
       .references(() => concepts.id, { onDelete: "cascade" }),
     type: relationshipTypeEnum("type").notNull(),
+    description: text("description").notNull().default(""),
     confidence: real("confidence").notNull().default(0),
+    sourceRevisionId: uuid("source_revision_id").references(() => sourceRevisions.id, { onDelete: "set null" }),
+    sourceSectionId: uuid("source_section_id").references(() => sourceSections.id, { onDelete: "set null" }),
     ...timestamps
   },
   (table) => ({
@@ -260,7 +270,50 @@ export const relationships = pgTable(
       table.type
     ),
     sourceIdx: index("relationships_source_idx").on(table.sourceConceptId),
-    targetIdx: index("relationships_target_idx").on(table.targetConceptId)
+    targetIdx: index("relationships_target_idx").on(table.targetConceptId),
+    sourceRevisionIdx: index("relationships_source_revision_idx").on(table.sourceRevisionId),
+    sourceSectionIdx: index("relationships_source_section_idx").on(table.sourceSectionId)
+  })
+);
+
+export const unresolvedRelationships = pgTable(
+  "unresolved_relationships",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    sourceConceptId: uuid("source_concept_id")
+      .notNull()
+      .references(() => concepts.id, { onDelete: "cascade" }),
+    sourceConceptSlug: text("source_concept_slug").notNull(),
+    targetConceptSlug: text("target_concept_slug").notNull(),
+    targetTitle: text("target_title").notNull(),
+    type: relationshipTypeEnum("type").notNull(),
+    description: text("description").notNull().default(""),
+    confidence: real("confidence").notNull().default(0),
+    sourceRevisionId: uuid("source_revision_id")
+      .notNull()
+      .references(() => sourceRevisions.id, { onDelete: "cascade" }),
+    sourceSectionId: uuid("source_section_id")
+      .notNull()
+      .references(() => sourceSections.id, { onDelete: "cascade" }),
+    status: text("status").notNull().default("pending"),
+    resolvedRelationshipId: uuid("resolved_relationship_id").references(() => relationships.id, { onDelete: "set null" }),
+    ...timestamps
+  },
+  (table) => ({
+    unresolvedUnique: uniqueIndex("unresolved_relationships_unique").on(
+      table.workspaceId,
+      table.sourceRevisionId,
+      table.sourceSectionId,
+      table.sourceConceptId,
+      table.targetConceptSlug,
+      table.type
+    ),
+    workspaceStatusIdx: index("unresolved_relationships_workspace_status_idx").on(table.workspaceId, table.status),
+    sourceConceptIdx: index("unresolved_relationships_source_concept_idx").on(table.sourceConceptId),
+    targetSlugIdx: index("unresolved_relationships_target_slug_idx").on(table.workspaceId, table.targetConceptSlug)
   })
 );
 
@@ -322,4 +375,6 @@ export type SourceRevisionRow = typeof sourceRevisions.$inferSelect;
 export type SourceSectionRow = typeof sourceSections.$inferSelect;
 export type ConceptRow = typeof concepts.$inferSelect;
 export type ClaimRow = typeof claims.$inferSelect;
+export type RelationshipRow = typeof relationships.$inferSelect;
+export type UnresolvedRelationshipRow = typeof unresolvedRelationships.$inferSelect;
 export type JobRow = typeof jobs.$inferSelect;

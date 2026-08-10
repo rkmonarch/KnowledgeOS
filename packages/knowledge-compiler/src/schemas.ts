@@ -3,6 +3,7 @@ import {
   claimStatusSchema,
   conceptStatusSchema,
   conceptTypeSchema,
+  type RelationshipType,
   relationshipTypeSchema
 } from "@knowledgeos/shared";
 
@@ -44,6 +45,7 @@ export const extractedRelationshipSchema = z
     type: relationshipTypeSchema,
     targetTitle: optionalModelStringSchema,
     targetSlug: optionalModelStringSchema,
+    description: z.string().trim().optional().default(""),
     confidence: z.number().min(0).max(1),
     evidence: z.string().trim().optional()
   })
@@ -88,8 +90,10 @@ export interface NormalizedClaim {
 }
 
 export interface NormalizedRelationship {
-  type: "depends_on" | "implements" | "replaces" | "contradicts" | "related_to" | "part_of" | "owned_by" | "documented_in";
+  type: RelationshipType;
   targetSlug: string;
+  targetTitle: string;
+  description: string;
   confidence: number;
 }
 

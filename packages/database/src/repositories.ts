@@ -3,6 +3,7 @@ import { z } from "zod";
 import {
   type ClaimRecord,
   type ClaimStatus,
+  type ConceptRelationships,
   type ConceptRecord,
   type ConceptStatus,
   type ConceptType,
@@ -12,8 +13,11 @@ import {
   type JobType,
   type Metadata,
   NotFoundError,
+  type RelationshipRecord,
   type RelationshipType,
   type SourceCitation,
+  type UnresolvedRelationshipRecord,
+  unresolvedRelationshipStatusSchema,
   type SourceKind,
   claimStatusSchema,
   conceptStatusSchema,
@@ -36,8 +40,10 @@ import {
   sourceRevisions,
   sourceSections,
   sources,
+  unresolvedRelationships,
   workspaces
 } from "./schema.js";
+import { resolveRelationshipDrafts } from "./relationship-resolution.js";
 
 export interface CreateSourceInput {
   workspaceId: string;
@@ -136,6 +142,8 @@ export interface PersistClaimInput {
 export interface PersistRelationshipInput {
   type: RelationshipType;
   targetSlug: string;
+  targetTitle: string;
+  description: string;
   confidence: number;
 }
 
@@ -165,6 +173,8 @@ export interface PersistExtractionInput {
 export interface PersistExtractionResult {
   conceptIds: string[];
   claimIds: string[];
+  relationshipIds: string[];
+  unresolvedRelationshipIds: string[];
 }
 
 export interface UpsertEmbeddingInput {
@@ -542,6 +552,8 @@ export class KnowledgeRepository {
     return this.db.transaction(async (tx) => {
       const conceptIds: string[] = [];
       const claimIds: string[] = [];
+      const relationshipIds: string[] = [];
+      const unresolvedRelationshipIds: string[] = [];
       const conceptIdBySlug = new Map<string, string>();
 
       for (const concept of input.concepts) {
@@ -634,55 +646,209 @@ export class KnowledgeRepository {
         }
       }
 
-      for (const concept of input.concepts) {
-        const sourceConceptId = conceptIdBySlug.get(concept.slug);
-        if (!sourceConceptId) {
-          continue;
-        }
-
-        for (const relationship of concept.relationships) {
-          const targetConceptId = conceptIdBySlug.get(relationship.targetSlug);
-          const existingTargetConceptId = targetConceptId
-            ? null
-            : (
-                await tx
-                  .select({ id: concepts.id })
-                  .from(concepts)
-                  .where(and(eq(concepts.workspaceId, input.workspaceId), eq(concepts.slug, relationship.targetSlug)))
-                  .limit(1)
-              )[0]?.id;
-          const resolvedTargetConceptId = targetConceptId ?? existingTargetConceptId;
-
-          if (!resolvedTargetConceptId || resolvedTargetConceptId === sourceConceptId) {
-            continue;
+      const relationshipTargetSlugs = [
+        ...new Set(
+          input.concepts
+            .flatMap((concept) => concept.relationships.map((relationship) => relationship.targetSlug))
+            .filter((targetSlug) => !conceptIdBySlug.has(targetSlug))
+        )
+      ];
+      const existingTargetRows =
+        relationshipTargetSlugs.length === 0
+          ? []
+          : await tx
+              .select({ id: concepts.id, slug: concepts.slug })
+              .from(concepts)
+              .where(and(eq(concepts.workspaceId, input.workspaceId), inArray(concepts.slug, relationshipTargetSlugs)));
+      const existingConceptIdsBySlug = new Map(existingTargetRows.map((concept) => [concept.slug, concept.id]));
+      const resolution = resolveRelationshipDrafts({
+        concepts: input.concepts.flatMap((concept) => {
+          const id = conceptIdBySlug.get(concept.slug);
+          if (!id) {
+            return [];
           }
 
-          await tx
-            .insert(relationships)
-            .values({
-              workspaceId: input.workspaceId,
-              sourceConceptId,
-              targetConceptId: resolvedTargetConceptId,
-              type: relationship.type,
-              confidence: relationship.confidence
-            })
-            .onConflictDoUpdate({
-              target: [
-                relationships.workspaceId,
-                relationships.sourceConceptId,
-                relationships.targetConceptId,
-                relationships.type
-              ],
-              set: {
-                confidence: relationship.confidence,
-                updatedAt: sql`now()`
-              }
-            });
+          return [
+            {
+              id,
+              slug: concept.slug,
+              sourceSectionId: concept.sourceSectionId,
+              relationships: concept.relationships
+            }
+          ];
+        }),
+        existingConceptIdsBySlug
+      });
+
+      for (const relationship of resolution.pending) {
+        const [unresolvedRow] = await tx
+          .insert(unresolvedRelationships)
+          .values({
+            workspaceId: input.workspaceId,
+            sourceConceptId: relationship.sourceConceptId,
+            sourceConceptSlug: relationship.sourceConceptSlug,
+            targetConceptSlug: relationship.targetConceptSlug,
+            targetTitle: relationship.targetTitle,
+            type: relationship.type,
+            description: relationship.description,
+            confidence: relationship.confidence,
+            sourceRevisionId: input.sourceRevisionId,
+            sourceSectionId: relationship.sourceSectionId,
+            status: "pending"
+          })
+          .onConflictDoUpdate({
+            target: [
+              unresolvedRelationships.workspaceId,
+              unresolvedRelationships.sourceRevisionId,
+              unresolvedRelationships.sourceSectionId,
+              unresolvedRelationships.sourceConceptId,
+              unresolvedRelationships.targetConceptSlug,
+              unresolvedRelationships.type
+            ],
+            set: {
+              targetTitle: relationship.targetTitle,
+              description: relationship.description,
+              confidence: relationship.confidence,
+              status: "pending",
+              resolvedRelationshipId: null,
+              updatedAt: sql`now()`
+            }
+          })
+          .returning({ id: unresolvedRelationships.id });
+
+        if (unresolvedRow) {
+          unresolvedRelationshipIds.push(unresolvedRow.id);
         }
       }
 
-      return { conceptIds, claimIds };
+      for (const relationship of resolution.resolved) {
+        const [relationshipRow] = await tx
+          .insert(relationships)
+          .values({
+            workspaceId: input.workspaceId,
+            sourceConceptId: relationship.sourceConceptId,
+            targetConceptId: relationship.targetConceptId,
+            type: relationship.type,
+            description: relationship.description,
+            confidence: relationship.confidence,
+            sourceRevisionId: input.sourceRevisionId,
+            sourceSectionId: relationship.sourceSectionId
+          })
+          .onConflictDoUpdate({
+            target: [
+              relationships.workspaceId,
+              relationships.sourceConceptId,
+              relationships.targetConceptId,
+              relationships.type
+            ],
+            set: {
+              description: relationship.description,
+              confidence: relationship.confidence,
+              sourceRevisionId: input.sourceRevisionId,
+              sourceSectionId: relationship.sourceSectionId,
+              updatedAt: sql`now()`
+            }
+          })
+          .returning({ id: relationships.id });
+
+        if (!relationshipRow) {
+          continue;
+        }
+
+        relationshipIds.push(relationshipRow.id);
+
+        await tx
+          .update(unresolvedRelationships)
+          .set({
+            status: "resolved",
+            resolvedRelationshipId: relationshipRow.id,
+            updatedAt: sql`now()`
+          })
+          .where(
+            and(
+              eq(unresolvedRelationships.workspaceId, input.workspaceId),
+              eq(unresolvedRelationships.sourceConceptId, relationship.sourceConceptId),
+              eq(unresolvedRelationships.targetConceptSlug, relationship.targetConceptSlug),
+              eq(unresolvedRelationships.type, relationship.type),
+              eq(unresolvedRelationships.status, "pending")
+            )
+          );
+      }
+
+      const resolvedPendingRelationshipIds = await this.resolvePendingRelationships(tx, input.workspaceId);
+      relationshipIds.push(...resolvedPendingRelationshipIds);
+
+      return { conceptIds, claimIds, relationshipIds, unresolvedRelationshipIds };
     });
+  }
+
+  private async resolvePendingRelationships(
+    tx: Pick<Database, "insert" | "select" | "update">,
+    workspaceId: string
+  ): Promise<string[]> {
+    const pendingRows = await tx
+      .select()
+      .from(unresolvedRelationships)
+      .where(and(eq(unresolvedRelationships.workspaceId, workspaceId), eq(unresolvedRelationships.status, "pending")));
+    const relationshipIds: string[] = [];
+
+    for (const pending of pendingRows) {
+      const [targetConcept] = await tx
+        .select({ id: concepts.id })
+        .from(concepts)
+        .where(and(eq(concepts.workspaceId, workspaceId), eq(concepts.slug, pending.targetConceptSlug)))
+        .limit(1);
+
+      if (!targetConcept || targetConcept.id === pending.sourceConceptId) {
+        continue;
+      }
+
+      const [relationshipRow] = await tx
+        .insert(relationships)
+        .values({
+          workspaceId,
+          sourceConceptId: pending.sourceConceptId,
+          targetConceptId: targetConcept.id,
+          type: pending.type,
+          description: pending.description,
+          confidence: pending.confidence,
+          sourceRevisionId: pending.sourceRevisionId,
+          sourceSectionId: pending.sourceSectionId
+        })
+        .onConflictDoUpdate({
+          target: [
+            relationships.workspaceId,
+            relationships.sourceConceptId,
+            relationships.targetConceptId,
+            relationships.type
+          ],
+          set: {
+            description: pending.description,
+            confidence: pending.confidence,
+            sourceRevisionId: pending.sourceRevisionId,
+            sourceSectionId: pending.sourceSectionId,
+            updatedAt: sql`now()`
+          }
+        })
+        .returning({ id: relationships.id });
+
+      if (!relationshipRow) {
+        continue;
+      }
+
+      relationshipIds.push(relationshipRow.id);
+
+      await tx
+        .update(unresolvedRelationships)
+        .set({
+          status: "resolved",
+          resolvedRelationshipId: relationshipRow.id,
+          updatedAt: sql`now()`
+        })
+        .where(eq(unresolvedRelationships.id, pending.id));
+    }
+
+    return relationshipIds;
   }
 
   async findConceptIdBySlug(workspaceId: string, slug: string): Promise<string | null> {
@@ -722,6 +888,52 @@ export class KnowledgeRepository {
       .orderBy(desc(claims.updatedAt));
 
     return Promise.all(rows.map((row) => this.toClaimRecord(row)));
+  }
+
+  async listRelationshipsForConcept(workspaceId: string, conceptId: string): Promise<ConceptRelationships> {
+    const [outgoingResult, incomingResult, unresolvedResult] = await Promise.all([
+      this.db.execute(relationshipSelectSql(workspaceId, conceptId, "outgoing")),
+      this.db.execute(relationshipSelectSql(workspaceId, conceptId, "incoming")),
+      this.db.execute(sql`
+        select
+          ur.id,
+          ur.workspace_id,
+          ur.source_concept_id,
+          ur.source_concept_slug,
+          ur.target_concept_slug,
+          ur.target_title,
+          ur.type,
+          ur.description,
+          ur.confidence,
+          ur.source_revision_id,
+          ur.source_section_id,
+          ur.status,
+          ur.created_at,
+          ur.updated_at,
+          s.id as citation_source_id,
+          s.name as citation_source_name,
+          ss.heading_path as citation_heading_path,
+          ss.start_line as citation_start_line,
+          ss.end_line as citation_end_line
+        from unresolved_relationships ur
+        join source_revisions sr on sr.id = ur.source_revision_id
+        join sources s on s.id = sr.source_id
+        join source_sections ss on ss.id = ur.source_section_id
+        where ur.workspace_id = ${workspaceId}
+          and ur.source_concept_id = ${conceptId}
+          and ur.status = 'pending'
+        order by ur.type asc, ur.target_title asc
+      `)
+    ]);
+
+    return {
+      outgoing: relationshipReadRowSchema.array().parse(rowsFromExecute(outgoingResult)).map(toRelationshipRecord),
+      incoming: relationshipReadRowSchema.array().parse(rowsFromExecute(incomingResult)).map(toRelationshipRecord),
+      unresolved: unresolvedRelationshipReadRowSchema
+        .array()
+        .parse(rowsFromExecute(unresolvedResult))
+        .map(toUnresolvedRelationshipRecord)
+    };
   }
 
   async getEmbeddableEntity(input: {
@@ -958,6 +1170,194 @@ export class KnowledgeRepository {
       quote: row.quote
     }));
   }
+}
+
+function relationshipSelectSql(workspaceId: string, conceptId: string, direction: "incoming" | "outgoing"): SQL {
+  const conceptFilter =
+    direction === "outgoing"
+      ? sql`r.source_concept_id = ${conceptId}`
+      : sql`r.target_concept_id = ${conceptId}`;
+
+  return sql`
+    select
+      r.id,
+      r.workspace_id,
+      r.source_concept_id,
+      r.target_concept_id,
+      r.type,
+      r.description,
+      r.confidence,
+      r.source_revision_id,
+      r.source_section_id,
+      r.created_at,
+      r.updated_at,
+      sc.slug as source_concept_slug,
+      sc.title as source_concept_title,
+      sc.type as source_concept_type,
+      tc.slug as target_concept_slug,
+      tc.title as target_concept_title,
+      tc.type as target_concept_type,
+      s.id as citation_source_id,
+      s.name as citation_source_name,
+      ss.heading_path as citation_heading_path,
+      ss.start_line as citation_start_line,
+      ss.end_line as citation_end_line
+    from relationships r
+    join concepts sc on sc.id = r.source_concept_id
+    join concepts tc on tc.id = r.target_concept_id
+    left join source_revisions sr on sr.id = r.source_revision_id
+    left join sources s on s.id = sr.source_id
+    left join source_sections ss on ss.id = r.source_section_id
+    where r.workspace_id = ${workspaceId}
+      and ${conceptFilter}
+    order by r.type asc, tc.title asc
+  `;
+}
+
+const relationshipReadRowSchema = z.object({
+  id: z.string().uuid(),
+  workspace_id: z.string().uuid(),
+  source_concept_id: z.string().uuid(),
+  target_concept_id: z.string().uuid(),
+  type: relationshipTypeSchema,
+  description: z.string(),
+  confidence: z.coerce.number(),
+  source_revision_id: z.string().uuid().nullable(),
+  source_section_id: z.string().uuid().nullable(),
+  created_at: z.coerce.date(),
+  updated_at: z.coerce.date(),
+  source_concept_slug: z.string(),
+  source_concept_title: z.string(),
+  source_concept_type: conceptTypeSchema,
+  target_concept_slug: z.string(),
+  target_concept_title: z.string(),
+  target_concept_type: conceptTypeSchema,
+  citation_source_id: z.string().uuid().nullable(),
+  citation_source_name: z.string().nullable(),
+  citation_heading_path: z.array(z.string()).nullable(),
+  citation_start_line: z.number().int().positive().nullable(),
+  citation_end_line: z.number().int().positive().nullable()
+});
+
+function toRelationshipRecord(row: z.infer<typeof relationshipReadRowSchema>): RelationshipRecord {
+  return {
+    id: row.id,
+    workspaceId: row.workspace_id,
+    sourceConceptId: row.source_concept_id,
+    targetConceptId: row.target_concept_id,
+    sourceConcept: {
+      id: row.source_concept_id,
+      slug: row.source_concept_slug,
+      title: row.source_concept_title,
+      type: row.source_concept_type
+    },
+    targetConcept: {
+      id: row.target_concept_id,
+      slug: row.target_concept_slug,
+      title: row.target_concept_title,
+      type: row.target_concept_type
+    },
+    type: row.type,
+    description: row.description,
+    confidence: clampScore(row.confidence),
+    sourceRevisionId: row.source_revision_id,
+    sourceSectionId: row.source_section_id,
+    citation: toNullableCitation({
+      sourceId: row.citation_source_id,
+      sourceRevisionId: row.source_revision_id,
+      sourceSectionId: row.source_section_id,
+      sourceName: row.citation_source_name,
+      headingPath: row.citation_heading_path,
+      startLine: row.citation_start_line,
+      endLine: row.citation_end_line
+    }),
+    createdAt: row.created_at.toISOString(),
+    updatedAt: row.updated_at.toISOString()
+  };
+}
+
+const unresolvedRelationshipReadRowSchema = z.object({
+  id: z.string().uuid(),
+  workspace_id: z.string().uuid(),
+  source_concept_id: z.string().uuid(),
+  source_concept_slug: z.string(),
+  target_concept_slug: z.string(),
+  target_title: z.string(),
+  type: relationshipTypeSchema,
+  description: z.string(),
+  confidence: z.coerce.number(),
+  source_revision_id: z.string().uuid(),
+  source_section_id: z.string().uuid(),
+  status: unresolvedRelationshipStatusSchema,
+  created_at: z.coerce.date(),
+  updated_at: z.coerce.date(),
+  citation_source_id: z.string().uuid().nullable(),
+  citation_source_name: z.string().nullable(),
+  citation_heading_path: z.array(z.string()).nullable(),
+  citation_start_line: z.number().int().positive().nullable(),
+  citation_end_line: z.number().int().positive().nullable()
+});
+
+function toUnresolvedRelationshipRecord(
+  row: z.infer<typeof unresolvedRelationshipReadRowSchema>
+): UnresolvedRelationshipRecord {
+  return {
+    id: row.id,
+    workspaceId: row.workspace_id,
+    sourceConceptId: row.source_concept_id,
+    sourceConceptSlug: row.source_concept_slug,
+    targetConceptSlug: row.target_concept_slug,
+    targetTitle: row.target_title,
+    type: row.type,
+    description: row.description,
+    confidence: clampScore(row.confidence),
+    sourceRevisionId: row.source_revision_id,
+    sourceSectionId: row.source_section_id,
+    citation: toNullableCitation({
+      sourceId: row.citation_source_id,
+      sourceRevisionId: row.source_revision_id,
+      sourceSectionId: row.source_section_id,
+      sourceName: row.citation_source_name,
+      headingPath: row.citation_heading_path,
+      startLine: row.citation_start_line,
+      endLine: row.citation_end_line
+    }),
+    status: row.status,
+    createdAt: row.created_at.toISOString(),
+    updatedAt: row.updated_at.toISOString()
+  };
+}
+
+function toNullableCitation(input: {
+  sourceId: string | null;
+  sourceRevisionId: string | null;
+  sourceSectionId: string | null;
+  sourceName: string | null;
+  headingPath: string[] | null;
+  startLine: number | null;
+  endLine: number | null;
+}): SourceCitation | null {
+  if (
+    !input.sourceId ||
+    !input.sourceRevisionId ||
+    !input.sourceSectionId ||
+    !input.sourceName ||
+    !input.headingPath ||
+    input.startLine === null ||
+    input.endLine === null
+  ) {
+    return null;
+  }
+
+  return {
+    sourceId: input.sourceId,
+    sourceRevisionId: input.sourceRevisionId,
+    sourceSectionId: input.sourceSectionId,
+    sourceName: input.sourceName,
+    headingPath: input.headingPath,
+    startLine: input.startLine,
+    endLine: input.endLine
+  };
 }
 
 const claimedJobRowSchema = z.object({

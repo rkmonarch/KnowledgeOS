@@ -1,9 +1,31 @@
 "use client";
 
-import { Activity, AlertCircle, CheckCircle2, Clock, Database, FileText, RefreshCw, Search, Send, UploadCloud } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import {
+  Activity,
+  AlertCircle,
+  ArrowRight,
+  CheckCircle2,
+  Clock,
+  Database,
+  FileText,
+  GitBranch,
+  RefreshCw,
+  Search,
+  Send,
+  UploadCloud
+} from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createKnowledgeOSClient } from "@knowledgeos/sdk";
-import type { ConceptDetailResponse, ConceptRecord, JobRecord, RetrievalResult, SourceCitation } from "@knowledgeos/shared/domain";
+import type {
+  ConceptDetailResponse,
+  ConceptRecord,
+  JobRecord,
+  RelationshipRecord,
+  RelationshipType,
+  RetrievalResult,
+  SourceCitation,
+  UnresolvedRelationshipRecord
+} from "@knowledgeos/shared/domain";
 
 const apiUrl = "/api";
 
@@ -19,6 +41,7 @@ The Mobile SDK uses the OAuth device flow for constrained devices.
 
 export default function DashboardPage() {
   const client = useMemo(() => createKnowledgeOSClient(apiUrl), []);
+  const dashboardRefreshInFlightRef = useRef(false);
   const [workspaceId, setWorkspaceId] = useState<string | null>(null);
   const [sourceName, setSourceName] = useState("Architecture.md");
   const [markdown, setMarkdown] = useState(sampleMarkdown);
@@ -30,11 +53,21 @@ export default function DashboardPage() {
   const [query, setQuery] = useState("How does authentication work?");
   const [results, setResults] = useState<RetrievalResult[]>([]);
   const [status, setStatus] = useState("Connecting");
+  const [statusTone, setStatusTone] = useState<"neutral" | "error">("neutral");
   const [connectionState, setConnectionState] = useState<"checking" | "online" | "offline">("checking");
-  const [isBusy, setIsBusy] = useState(false);
+  const [isInitializing, setIsInitializing] = useState(true);
+  const [isRefreshingDashboard, setIsRefreshingDashboard] = useState(false);
+  const [isIngesting, setIsIngesting] = useState(false);
+  const [isSearching, setIsSearching] = useState(false);
   const markdownStats = useMemo(() => getTextStats(markdown), [markdown]);
   const jobStats = useMemo(() => summarizeJobs(jobs), [jobs]);
   const activeJobCount = jobStats.queued + jobStats.running;
+  const isConceptListLoading = isInitializing || (isRefreshingDashboard && concepts.length === 0);
+  const isJobListLoading = isInitializing || (isRefreshingDashboard && jobs.length === 0);
+  const statusTextClassName = classNames(
+    isIngesting || isSearching || isRefreshingDashboard ? "pulse" : null,
+    statusTone === "error" ? "errorText" : null
+  );
 
   useEffect(() => {
     void initialize();
@@ -66,7 +99,7 @@ export default function DashboardPage() {
     }
 
     const intervalId = window.setInterval(() => {
-      void refreshDashboard(workspaceId);
+      void refreshDashboard(workspaceId, { silent: true });
     }, 5_000);
 
     return () => window.clearInterval(intervalId);
@@ -77,20 +110,47 @@ export default function DashboardPage() {
       const response = await client.getDefaultWorkspace();
       setWorkspaceId(response.workspace.id);
       setStatus(`Workspace: ${response.workspace.name}`);
+      setStatusTone("neutral");
       setConnectionState("online");
-      await refreshDashboard(response.workspace.id);
+      await refreshDashboard(response.workspace.id, { silent: true });
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "API connection failed");
+      setStatusTone("error");
       setConnectionState("offline");
+    } finally {
+      setIsInitializing(false);
     }
   }
 
-  async function refreshDashboard(id = workspaceId): Promise<void> {
+  async function refreshDashboard(
+    id = workspaceId,
+    options: Readonly<{ silent?: boolean }> = {}
+  ): Promise<void> {
     if (!id) {
       return;
     }
 
-    await Promise.all([refreshConcepts(id), refreshJobs(id)]);
+    if (dashboardRefreshInFlightRef.current) {
+      return;
+    }
+
+    dashboardRefreshInFlightRef.current = true;
+
+    if (!options.silent) {
+      setIsRefreshingDashboard(true);
+    }
+
+    try {
+      await Promise.all([refreshConcepts(id), refreshJobs(id)]);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Dashboard refresh failed");
+      setStatusTone("error");
+    } finally {
+      dashboardRefreshInFlightRef.current = false;
+      if (!options.silent) {
+        setIsRefreshingDashboard(false);
+      }
+    }
   }
 
   async function refreshConcepts(id = workspaceId): Promise<void> {
@@ -121,6 +181,7 @@ export default function DashboardPage() {
       setConceptDetail(response);
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Concept detail failed");
+      setStatusTone("error");
     } finally {
       setIsLoadingConcept(false);
     }
@@ -131,7 +192,7 @@ export default function DashboardPage() {
       return;
     }
 
-    setIsBusy(true);
+    setIsIngesting(true);
     try {
       const response = await client.ingestMarkdown({
         workspaceId,
@@ -146,11 +207,13 @@ export default function DashboardPage() {
           ? `Queued ${response.sectionCount} section${response.sectionCount === 1 ? "" : "s"}`
           : "No source changes detected"
       );
+      setStatusTone("neutral");
       await refreshDashboard(workspaceId);
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : "Ingestion failed");
+      setStatus(formatIngestionError(error));
+      setStatusTone("error");
     } finally {
-      setIsBusy(false);
+      setIsIngesting(false);
     }
   }
 
@@ -159,7 +222,7 @@ export default function DashboardPage() {
       return;
     }
 
-    setIsBusy(true);
+    setIsSearching(true);
     try {
       const response = await client.search({
         workspaceId,
@@ -169,10 +232,12 @@ export default function DashboardPage() {
       });
       setResults(response.results);
       setStatus(`${response.results.length} result${response.results.length === 1 ? "" : "s"}`);
+      setStatusTone("neutral");
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Search failed");
+      setStatusTone("error");
     } finally {
-      setIsBusy(false);
+      setIsSearching(false);
     }
   }
 
@@ -186,8 +251,14 @@ export default function DashboardPage() {
           </div>
           <h1>Knowledge Console</h1>
         </div>
-        <button className="iconButton dark" type="button" onClick={() => void refreshDashboard()} title="Refresh dashboard">
-          <RefreshCw size={18} />
+        <button
+          className="iconButton dark"
+          type="button"
+          disabled={isInitializing || isRefreshingDashboard}
+          onClick={() => void refreshDashboard()}
+          title="Refresh dashboard"
+        >
+          <RefreshCw className={isRefreshingDashboard ? "spin" : undefined} size={18} />
         </button>
       </header>
 
@@ -197,7 +268,7 @@ export default function DashboardPage() {
           <span>{connectionState === "online" ? "API Online" : connectionState === "checking" ? "Checking API" : "API Offline"}</span>
         </div>
         <div className="statusMessage">
-          <span className={isBusy ? "pulse" : ""}>{status}</span>
+          <span className={statusTextClassName}>{status}</span>
           <code>Next.js route handlers</code>
         </div>
         <div className="metricStrip">
@@ -228,22 +299,32 @@ export default function DashboardPage() {
               />
             </label>
           </div>
-          <textarea
-            id="markdown"
-            className="markdownInput"
-            value={markdown}
-            onChange={(event) => setMarkdown(event.target.value)}
-          />
+          <div className="inputFrame">
+            {isIngesting ? <div className="inputOverlay">Queueing source revision</div> : null}
+            <textarea
+              id="markdown"
+              className="markdownInput"
+              value={markdown}
+              disabled={isIngesting}
+              onChange={(event) => setMarkdown(event.target.value)}
+            />
+          </div>
           <div className="actionRow">
-            <button className="primaryButton" type="button" disabled={isBusy || !workspaceId} onClick={() => void submitMarkdown()}>
-              <Send size={17} />
-              Queue Ingestion
+            <button className="primaryButton" type="button" disabled={isIngesting || !workspaceId} onClick={() => void submitMarkdown()}>
+              {isIngesting ? <RefreshCw className="spin" size={17} /> : <Send size={17} />}
+              {isIngesting ? "Queueing" : "Queue Ingestion"}
             </button>
             <span className="inlineState">
-              {workspaceId ? (activeJobCount > 0 ? `${activeJobCount} active` : "Ready") : "Waiting for API"}
+              {isIngesting
+                ? "Hashing and storing revision"
+                : workspaceId
+                  ? activeJobCount > 0
+                    ? `${activeJobCount} active`
+                    : "Ready"
+                  : "Waiting for API"}
             </span>
           </div>
-          <JobMonitor jobs={jobs} stats={jobStats} />
+          <JobMonitor jobs={jobs} stats={jobStats} isLoading={isJobListLoading} />
         </section>
 
         <section className="surface conceptsSurface">
@@ -252,11 +333,19 @@ export default function DashboardPage() {
               <FileText size={19} />
               <h2>Concepts</h2>
             </div>
-            <span className="sectionMeta">{concepts.length}</span>
+            <span className={`sectionMeta ${isRefreshingDashboard ? "softPulse" : ""}`}>{concepts.length}</span>
           </div>
-          {concepts.length > 0 ? <ConceptDetailPanel detail={conceptDetail} isLoading={isLoadingConcept} /> : null}
+          {concepts.length > 0 || isConceptListLoading ? (
+            <ConceptDetailPanel
+              detail={conceptDetail}
+              isLoading={isLoadingConcept || isConceptListLoading}
+              onSelectConcept={setSelectedConceptId}
+            />
+          ) : null}
           <div className="conceptList">
-            {concepts.length === 0 ? (
+            {isConceptListLoading ? (
+              <ConceptListSkeleton />
+            ) : concepts.length === 0 ? (
               <div className="emptyState">
                 <FileText size={18} />
                 <span>No concepts yet</span>
@@ -312,12 +401,14 @@ export default function DashboardPage() {
                 }
               }}
             />
-            <button className="iconButton accent" type="button" disabled={isBusy || !workspaceId} onClick={() => void runSearch()} title="Search">
-              <Search size={18} />
+            <button className="iconButton accent" type="button" disabled={isSearching || !workspaceId} onClick={() => void runSearch()} title="Search">
+              {isSearching ? <RefreshCw className="spin" size={18} /> : <Search size={18} />}
             </button>
           </div>
           <div className="resultList">
-            {results.length === 0 ? (
+            {isSearching ? (
+              <SearchResultsSkeleton />
+            ) : results.length === 0 ? (
               <div className="emptyState">
                 <Search size={18} />
                 <span>No search results</span>
@@ -357,8 +448,17 @@ function Metric({ label, value }: Readonly<{ label: string; value: string }>) {
 
 function ConceptDetailPanel({
   detail,
-  isLoading
-}: Readonly<{ detail: ConceptDetailResponse | null; isLoading: boolean }>) {
+  isLoading,
+  onSelectConcept
+}: Readonly<{
+  detail: ConceptDetailResponse | null;
+  isLoading: boolean;
+  onSelectConcept: (conceptId: string) => void;
+}>) {
+  if (isLoading) {
+    return <ConceptDetailSkeleton />;
+  }
+
   if (!detail) {
     return (
       <div className="conceptDetail">
@@ -410,7 +510,142 @@ function ConceptDetailPanel({
           )}
         </div>
       </div>
+      <RelationshipExplorer
+        currentConceptId={detail.concept.id}
+        relationships={detail.relationships}
+        onSelectConcept={onSelectConcept}
+      />
     </article>
+  );
+}
+
+function RelationshipExplorer({
+  currentConceptId,
+  relationships,
+  onSelectConcept
+}: Readonly<{
+  currentConceptId: string;
+  relationships: ConceptDetailResponse["relationships"];
+  onSelectConcept: (conceptId: string) => void;
+}>) {
+  const groups = buildRelationshipGroups(currentConceptId, relationships);
+  const relationshipCount = relationships.incoming.length + relationships.outgoing.length + relationships.unresolved.length;
+
+  return (
+    <div className="relationshipSection">
+      <div className="claimSectionHeader">
+        <span>Relationships</span>
+        <strong>{relationshipCount}</strong>
+      </div>
+      {groups.length === 0 ? (
+        <div className="emptyState compact">
+          <GitBranch size={17} />
+          <span>No relationships extracted</span>
+        </div>
+      ) : (
+        <div className="relationshipGroups">
+          {groups.map((group) => (
+            <div className="relationshipGroup" key={group.label}>
+              <div className="relationshipGroupTitle">{group.label}</div>
+              <div className="relationshipList">
+                {group.items.map((item) => (
+                  <button
+                    className={`relationshipRow ${item.targetConceptId ? "" : "pending"}`}
+                    key={item.id}
+                    type="button"
+                    disabled={!item.targetConceptId}
+                    onClick={() => {
+                      if (item.targetConceptId) {
+                        onSelectConcept(item.targetConceptId);
+                      }
+                    }}
+                  >
+                    <span className="relationshipIcon">
+                      <ArrowRight size={14} />
+                    </span>
+                    <span className="relationshipBody">
+                      <span className="relationshipTarget">
+                        {item.targetTitle}
+                        {item.isPending ? <span className="pendingBadge">Pending</span> : null}
+                      </span>
+                      {item.description ? <span className="relationshipDescription">{item.description}</span> : null}
+                      <span className="relationshipMeta">
+                        {formatRelationshipType(item.type)} · {Math.round(item.confidence * 100)}%
+                        {item.citation ? ` · ${formatCitation(item.citation)}` : ""}
+                      </span>
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ConceptDetailSkeleton() {
+  return (
+    <div className="conceptDetail" aria-label="Loading selected concept">
+      <div className="detailHeader">
+        <div className="skeletonStack wide">
+          <SkeletonBlock className="skeletonTiny" />
+          <SkeletonBlock className="skeletonHeading" />
+        </div>
+        <SkeletonBlock className="skeletonBadge" />
+      </div>
+      <div className="skeletonStack">
+        <SkeletonBlock className="skeletonLine" />
+        <SkeletonBlock className="skeletonLine short" />
+      </div>
+      <div className="detailMetaRow">
+        <SkeletonBlock className="skeletonChip" />
+        <SkeletonBlock className="skeletonChip" />
+        <SkeletonBlock className="skeletonChip wide" />
+      </div>
+      <div className="claimSection">
+        <div className="claimSectionHeader">
+          <SkeletonBlock className="skeletonTiny" />
+          <SkeletonBlock className="skeletonCount" />
+        </div>
+        <div className="claimList">
+          {[0, 1].map((item) => (
+            <div className="claimRow" key={item}>
+              <SkeletonBlock className="skeletonLine" />
+              <SkeletonBlock className="skeletonLine short" />
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ConceptListSkeleton() {
+  return (
+    <>
+      {[0, 1, 2].map((item) => (
+        <div className="conceptRow skeletonRow" key={item} aria-label="Loading concept">
+          <div>
+            <div className="rowHeader">
+              <SkeletonBlock className="skeletonHeading" />
+              <SkeletonBlock className="skeletonBadge" />
+            </div>
+            <div className="skeletonStack">
+              <SkeletonBlock className="skeletonLine" />
+              <SkeletonBlock className="skeletonLine short" />
+            </div>
+            <div className="tagRow">
+              <SkeletonBlock className="skeletonChip" />
+              <SkeletonBlock className="skeletonChip" />
+              <SkeletonBlock className="skeletonChip" />
+            </div>
+          </div>
+          <SkeletonBlock className="skeletonCitation" />
+        </div>
+      ))}
+    </>
   );
 }
 
@@ -422,7 +657,7 @@ interface JobStats {
   failed: number;
 }
 
-function JobMonitor({ jobs, stats }: Readonly<{ jobs: JobRecord[]; stats: JobStats }>) {
+function JobMonitor({ jobs, stats, isLoading }: Readonly<{ jobs: JobRecord[]; stats: JobStats; isLoading: boolean }>) {
   const progress = stats.total === 0 ? 0 : Math.round((stats.completed / stats.total) * 100);
   const latestJobs = jobs.slice(0, 6);
 
@@ -457,7 +692,9 @@ function JobMonitor({ jobs, stats }: Readonly<{ jobs: JobRecord[]; stats: JobSta
         <div className="jobProgressBar" style={{ width: `${progress}%` }} />
       </div>
       <div className="jobList">
-        {latestJobs.length === 0 ? (
+        {isLoading ? (
+          <JobListSkeleton />
+        ) : latestJobs.length === 0 ? (
           <div className="emptyState compact">
             <FileText size={17} />
             <span>No jobs yet</span>
@@ -479,6 +716,204 @@ function JobMonitor({ jobs, stats }: Readonly<{ jobs: JobRecord[]; stats: JobSta
       </div>
     </div>
   );
+}
+
+function JobListSkeleton() {
+  return (
+    <>
+      {[0, 1, 2].map((item) => (
+        <div className="jobRow" key={item} aria-label="Loading job">
+          <div className="skeletonStack">
+            <SkeletonBlock className="skeletonLine medium" />
+            <SkeletonBlock className="skeletonLine short" />
+          </div>
+          <SkeletonBlock className="skeletonBadge" />
+        </div>
+      ))}
+    </>
+  );
+}
+
+function SearchResultsSkeleton() {
+  return (
+    <>
+      {[0, 1, 2].map((item) => (
+        <div className="resultRow" key={item} aria-label="Loading result">
+          <SkeletonBlock className="skeletonScore" />
+          <div className="skeletonStack">
+            <SkeletonBlock className="skeletonHeading" />
+            <SkeletonBlock className="skeletonLine" />
+            <SkeletonBlock className="skeletonLine medium" />
+          </div>
+        </div>
+      ))}
+    </>
+  );
+}
+
+function SkeletonBlock({ className }: Readonly<{ className: string }>) {
+  return <span className={`skeleton ${className}`} aria-hidden="true" />;
+}
+
+function classNames(...values: Array<string | null>): string {
+  return values.filter(Boolean).join(" ");
+}
+
+interface RelationshipExplorerGroup {
+  label: string;
+  items: RelationshipExplorerItem[];
+}
+
+interface RelationshipExplorerItem {
+  id: string;
+  type: RelationshipType;
+  targetConceptId: string | null;
+  targetTitle: string;
+  description: string;
+  confidence: number;
+  citation: SourceCitation | null;
+  isPending: boolean;
+}
+
+function buildRelationshipGroups(
+  currentConceptId: string,
+  relationships: ConceptDetailResponse["relationships"]
+): RelationshipExplorerGroup[] {
+  const groups = new Map<string, RelationshipExplorerItem[]>();
+
+  for (const relationship of relationships.outgoing) {
+    addRelationshipGroupItem(groups, formatOutgoingRelationshipLabel(relationship.type), toResolvedRelationshipItem(currentConceptId, relationship));
+  }
+
+  for (const relationship of relationships.incoming) {
+    addRelationshipGroupItem(groups, formatIncomingRelationshipLabel(relationship.type), toResolvedRelationshipItem(currentConceptId, relationship));
+  }
+
+  for (const relationship of relationships.unresolved) {
+    addRelationshipGroupItem(groups, `${formatOutgoingRelationshipLabel(relationship.type)} Pending`, toPendingRelationshipItem(relationship));
+  }
+
+  return [...groups.entries()].map(([label, items]) => ({ label, items }));
+}
+
+function addRelationshipGroupItem(
+  groups: Map<string, RelationshipExplorerItem[]>,
+  label: string,
+  item: RelationshipExplorerItem
+): void {
+  const existing = groups.get(label);
+  if (existing) {
+    existing.push(item);
+    return;
+  }
+
+  groups.set(label, [item]);
+}
+
+function toResolvedRelationshipItem(currentConceptId: string, relationship: RelationshipRecord): RelationshipExplorerItem {
+  const relatedConcept =
+    relationship.sourceConceptId === currentConceptId ? relationship.targetConcept : relationship.sourceConcept;
+
+  return {
+    id: relationship.id,
+    type: relationship.type,
+    targetConceptId: relatedConcept.id,
+    targetTitle: relatedConcept.title,
+    description: relationship.description,
+    confidence: relationship.confidence,
+    citation: relationship.citation,
+    isPending: false
+  };
+}
+
+function toPendingRelationshipItem(relationship: UnresolvedRelationshipRecord): RelationshipExplorerItem {
+  return {
+    id: relationship.id,
+    type: relationship.type,
+    targetConceptId: null,
+    targetTitle: relationship.targetTitle,
+    description: relationship.description,
+    confidence: relationship.confidence,
+    citation: relationship.citation,
+    isPending: true
+  };
+}
+
+function formatOutgoingRelationshipLabel(type: RelationshipType): string {
+  switch (type) {
+    case "depends_on":
+      return "Depends on";
+    case "used_by":
+      return "Used by";
+    case "uses":
+      return "Uses";
+    case "implements":
+      return "Implements";
+    case "part_of":
+      return "Part of";
+    case "related_to":
+      return "Related to";
+    case "replaces":
+      return "Replaces";
+    case "contradicts":
+      return "Contradicts";
+    case "requires":
+      return "Requires";
+    case "produces":
+      return "Produces";
+    case "affects":
+      return "Affects";
+    case "mitigates":
+      return "Mitigates";
+    case "signed_by":
+      return "Signed by";
+    case "owned_by":
+      return "Owned by";
+    case "documented_in":
+      return "Documented in";
+  }
+}
+
+function formatIncomingRelationshipLabel(type: RelationshipType): string {
+  switch (type) {
+    case "depends_on":
+      return "Depended on by";
+    case "used_by":
+      return "Uses this";
+    case "uses":
+      return "Used by";
+    case "implements":
+      return "Implemented by";
+    case "part_of":
+      return "Contains";
+    case "related_to":
+      return "Related from";
+    case "replaces":
+      return "Replaced by";
+    case "contradicts":
+      return "Contradicted by";
+    case "requires":
+      return "Required by";
+    case "produces":
+      return "Produced by";
+    case "affects":
+      return "Affected by";
+    case "mitigates":
+      return "Mitigated by";
+    case "signed_by":
+      return "Signs";
+    case "owned_by":
+      return "Owns";
+    case "documented_in":
+      return "Documents";
+  }
+}
+
+function formatRelationshipType(type: RelationshipType): string {
+  return type
+    .split("_")
+    .map((part) => `${part[0]?.toUpperCase() ?? ""}${part.slice(1)}`)
+    .join(" ");
 }
 
 function summarizeJobs(jobs: JobRecord[]): JobStats {
@@ -519,6 +954,15 @@ function formatTime(value: string): string {
 
 function formatCitation(citation: SourceCitation): string {
   return `${citation.sourceName}:${citation.startLine}-${citation.endLine}`;
+}
+
+function formatIngestionError(error: unknown): string {
+  const message = error instanceof Error ? error.message : "Ingestion failed";
+  if (message.startsWith("DUPLICATE_SOURCE_REVISION:")) {
+    return "Duplicate note: this exact source has already been added.";
+  }
+
+  return message;
 }
 
 function getTextStats(value: string): { characters: number; lines: number } {

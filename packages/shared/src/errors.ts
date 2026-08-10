@@ -31,3 +31,9 @@ export class NotFoundError extends KnowledgeOSError {
   }
 }
 
+export class DuplicateSourceRevisionError extends KnowledgeOSError {
+  constructor(message: string, details?: unknown) {
+    super("DUPLICATE_SOURCE_REVISION", message, details);
+    this.name = "DuplicateSourceRevisionError";
+  }
+}

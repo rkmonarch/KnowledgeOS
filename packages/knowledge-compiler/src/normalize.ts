@@ -35,6 +35,8 @@ export function normalizeExtraction(section: SourceSectionForExtraction, output:
         concept.relationships.map((relationship) => ({
           type: relationship.type,
           targetSlug: slugify(relationship.targetSlug ?? relationship.targetTitle ?? ""),
+          targetTitle: normalizeRelationshipTargetTitle(relationship.targetTitle, relationship.targetSlug),
+          description: normalizeWhitespace(relationship.description || relationship.evidence || ""),
           confidence: clampConfidence(relationship.confidence)
         })),
         (relationship) => `${relationship.type}:${relationship.targetSlug}`
@@ -68,6 +70,19 @@ function normalizeTags(tags: string[]): string[] {
 
 function normalizeWhitespace(value: string): string {
   return value.replace(/\s+/g, " ").trim();
+}
+
+function normalizeRelationshipTargetTitle(targetTitle: string | undefined, targetSlug: string | undefined): string {
+  const title = targetTitle?.trim();
+  if (title) {
+    return title;
+  }
+
+  return (targetSlug ?? "")
+    .split("-")
+    .filter((part) => part.length > 0)
+    .map((part) => `${part[0]?.toUpperCase() ?? ""}${part.slice(1)}`)
+    .join(" ");
 }
 
 function clampConfidence(value: number): number {
@@ -109,4 +124,3 @@ function mergeConcepts(left: NormalizedConcept, right: NormalizedConcept): Norma
     )
   };
 }
-

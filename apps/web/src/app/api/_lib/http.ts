@@ -75,5 +75,8 @@ function statusForCode(code: string): number {
   if (code === "INVALID_JSON" || code === "VALIDATION_BOUNDARY_ERROR") {
     return 400;
   }
+  if (code === "DUPLICATE_SOURCE_REVISION") {
+    return 409;
+  }
   return 500;
 }

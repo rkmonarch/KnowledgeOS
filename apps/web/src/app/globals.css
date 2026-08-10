@@ -177,6 +177,18 @@ h3 {
   color: var(--amber);
 }
 
+.errorText {
+  color: var(--red) !important;
+}
+
+.softPulse {
+  animation: softPulse 1100ms ease-in-out infinite alternate;
+}
+
+.spin {
+  animation: spin 900ms linear infinite;
+}
+
 .metricStrip {
   display: flex;
   align-items: center;
@@ -308,6 +320,31 @@ h3 {
 .markdownInput:focus {
   border-color: var(--accent);
   box-shadow: 0 0 0 3px rgba(15, 118, 110, 0.12);
+}
+
+.inputFrame {
+  position: relative;
+}
+
+.inputOverlay {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 1;
+  min-height: 28px;
+  padding: 6px 9px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.94);
+  color: var(--accent-strong);
+  font-size: 12px;
+  font-weight: 800;
+  box-shadow: 0 8px 18px rgba(24, 34, 53, 0.08);
+}
+
+.markdownInput:disabled {
+  background: var(--surface-muted);
+  color: var(--muted);
 }
 
 .actionRow {
@@ -510,6 +547,85 @@ h3 {
   padding: 10px;
 }
 
+.skeleton {
+  display: block;
+  overflow: hidden;
+  border-radius: 999px;
+  background:
+    linear-gradient(90deg, rgba(238, 242, 247, 0) 0%, rgba(255, 255, 255, 0.82) 46%, rgba(238, 242, 247, 0) 100%),
+    var(--surface-strong);
+  background-size: 220% 100%;
+  animation: shimmer 1250ms ease-in-out infinite;
+}
+
+.skeletonStack {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.skeletonStack.wide {
+  width: min(260px, 72%);
+}
+
+.skeletonTiny {
+  width: 72px;
+  height: 11px;
+}
+
+.skeletonHeading {
+  width: min(220px, 72%);
+  height: 18px;
+}
+
+.skeletonLine {
+  width: 100%;
+  height: 13px;
+}
+
+.skeletonLine.medium {
+  width: 70%;
+}
+
+.skeletonLine.short {
+  width: 48%;
+}
+
+.skeletonBadge {
+  width: 48px;
+  height: 24px;
+}
+
+.skeletonCount {
+  width: 28px;
+  height: 16px;
+}
+
+.skeletonChip {
+  width: 72px;
+  height: 24px;
+}
+
+.skeletonChip.wide {
+  width: 126px;
+}
+
+.skeletonCitation {
+  width: 120px;
+  height: 14px;
+}
+
+.skeletonScore {
+  width: 50px;
+  height: 36px;
+  border-radius: 7px;
+}
+
+.tagRow .skeleton {
+  padding: 0;
+  background-color: var(--surface-strong);
+}
+
 .conceptList,
 .resultList {
   display: grid;
@@ -619,6 +735,121 @@ h3 {
   line-height: 1.4;
 }
 
+.relationshipSection {
+  display: grid;
+  gap: 9px;
+}
+
+.relationshipGroups {
+  display: grid;
+  gap: 10px;
+}
+
+.relationshipGroup {
+  display: grid;
+  gap: 7px;
+}
+
+.relationshipGroupTitle {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.relationshipList {
+  display: grid;
+  gap: 7px;
+}
+
+.relationshipRow {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  align-items: start;
+  gap: 8px;
+  width: 100%;
+  padding: 9px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: #fff;
+  color: inherit;
+  text-align: left;
+}
+
+.relationshipRow:hover {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(15, 118, 110, 0.08);
+}
+
+.relationshipRow.pending {
+  background: var(--surface-muted);
+}
+
+.relationshipRow:disabled {
+  cursor: default;
+  opacity: 1;
+}
+
+.relationshipRow.pending:hover {
+  border-color: var(--line);
+  box-shadow: none;
+}
+
+.relationshipIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  background: #eef6f5;
+  color: var(--accent-strong);
+}
+
+.relationshipBody {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.relationshipTarget {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 850;
+  line-height: 1.3;
+}
+
+.pendingBadge {
+  min-height: 20px;
+  padding: 3px 6px;
+  border-radius: 999px;
+  background: var(--amber-soft);
+  color: var(--amber);
+  font-size: 10px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.relationshipDescription,
+.relationshipMeta {
+  overflow-wrap: anywhere;
+  line-height: 1.35;
+}
+
+.relationshipDescription {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.relationshipMeta {
+  color: var(--subtle);
+  font-size: 11px;
+  font-weight: 800;
+}
+
 .conceptRow,
 .resultRow {
   display: grid;
@@ -645,6 +876,12 @@ h3 {
 .conceptRow:focus-visible {
   outline: 3px solid rgba(15, 118, 110, 0.16);
   outline-offset: 2px;
+}
+
+.skeletonRow,
+.skeletonRow:hover {
+  border-color: var(--line);
+  box-shadow: none;
 }
 
 .resultRow {
@@ -822,5 +1059,31 @@ h3 {
 
   .markdownInput {
     min-height: 340px;
+  }
+}
+
+@keyframes shimmer {
+  from {
+    background-position: 180% 0;
+  }
+
+  to {
+    background-position: -80% 0;
+  }
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes softPulse {
+  from {
+    background: var(--surface-strong);
+  }
+
+  to {
+    background: var(--green-soft);
   }
 }

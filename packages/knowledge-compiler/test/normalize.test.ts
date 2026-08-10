@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { normalizeExtraction } from "../src/normalize.js";
+import { extractionOutputSchema } from "../src/schemas.js";
 
 const section = {
   workspaceId: "00000000-0000-4000-8000-000000000001",
@@ -57,5 +58,55 @@ describe("normalizeExtraction", () => {
     expect(concept?.claims[0]?.startLine).toBe(4);
     expect(concept?.claims[0]?.endLine).toBe(8);
   });
-});
 
+  it("validates and normalizes typed relationships with target references", () => {
+    const parsed = extractionOutputSchema.parse({
+      concepts: [
+        {
+          title: "Authentication Service",
+          summary: "Auth service",
+          body: "Authentication Service uses OAuth Device Flow.",
+          type: "system",
+          tags: ["Auth"],
+          confidence: 0.82,
+          owner: null,
+          status: "active",
+          claims: [],
+          relationships: [
+            {
+              type: "uses",
+              targetTitle: "OAuth Device Flow",
+              description: "Authentication Service uses OAuth Device Flow.",
+              confidence: 0.77,
+              evidence: "uses OAuth Device Flow"
+            },
+            {
+              type: "signed_by",
+              targetSlug: "key-management-service",
+              confidence: 0.71
+            }
+          ]
+        }
+      ]
+    });
+
+    const [concept] = normalizeExtraction(section, parsed);
+
+    expect(concept?.relationships).toEqual([
+      {
+        type: "uses",
+        targetSlug: "oauth-device-flow",
+        targetTitle: "OAuth Device Flow",
+        description: "Authentication Service uses OAuth Device Flow.",
+        confidence: 0.77
+      },
+      {
+        type: "signed_by",
+        targetSlug: "key-management-service",
+        targetTitle: "Key Management Service",
+        description: "",
+        confidence: 0.71
+      }
+    ]);
+  });
+});

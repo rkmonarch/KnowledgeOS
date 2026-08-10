@@ -21,9 +21,12 @@ export async function GET(request: Request): Promise<Response> {
       throw new NotFoundError("Concept was not found in workspace", query);
     }
 
-    const claims = await runtimeContext.repository.listClaimsForConcept(query.conceptId);
+    const [claims, relationships] = await Promise.all([
+      runtimeContext.repository.listClaimsForConcept(query.conceptId),
+      runtimeContext.repository.listRelationshipsForConcept(query.workspaceId, query.conceptId)
+    ]);
 
-    return jsonResponse({ concept, claims });
+    return jsonResponse({ concept, claims, relationships });
   } catch (error) {
     return errorResponse(error);
   }

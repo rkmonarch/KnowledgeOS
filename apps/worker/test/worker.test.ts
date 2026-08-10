@@ -80,7 +80,9 @@ class MemoryWorkerRepository implements TestRepository {
     this.persistedExtractions.push(input);
     return {
       conceptIds: ["00000000-0000-4000-8000-000000000101"],
-      claimIds: ["00000000-0000-4000-8000-000000000102"]
+      claimIds: ["00000000-0000-4000-8000-000000000102"],
+      relationshipIds: [],
+      unresolvedRelationshipIds: []
     };
   }
 

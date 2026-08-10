@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { Metadata } from "@knowledgeos/shared";
+import { DuplicateSourceRevisionError, type Metadata } from "@knowledgeos/shared";
 import { ingestMarkdown, type IngestionRepository } from "../src/service.js";
 
 class MemoryIngestionRepository implements IngestionRepository {
@@ -60,21 +60,19 @@ describe("ingestMarkdown", () => {
       { repository, defaultWorkspaceName: "Default" }
     );
 
-    const second = await ingestMarkdown(
-      {
-        name: "Architecture.md",
-        content: "# Authentication\r\n\r\nOAuth is used.",
-        metadata: {}
-      },
-      { repository, defaultWorkspaceName: "Default" }
-    );
-
     expect(first.changed).toBe(true);
     expect(first.sectionCount).toBe(1);
     expect(first.extractionJobId).toBe("00000000-0000-4000-8000-000000000004");
-    expect(second.changed).toBe(false);
-    expect(second.extractionJobId).toBeNull();
+    await expect(
+      ingestMarkdown(
+        {
+          name: "Architecture.md",
+          content: "# Authentication\r\n\r\nOAuth is used.",
+          metadata: {}
+        },
+        { repository, defaultWorkspaceName: "Default" }
+      )
+    ).rejects.toBeInstanceOf(DuplicateSourceRevisionError);
     expect(repository.jobs).toHaveLength(1);
   });
 });
-

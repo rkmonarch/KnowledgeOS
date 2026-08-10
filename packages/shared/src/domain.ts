@@ -30,11 +30,18 @@ export type ClaimStatus = z.infer<typeof claimStatusSchema>;
 
 export const relationshipTypeSchema = z.enum([
   "depends_on",
+  "used_by",
+  "uses",
   "implements",
+  "part_of",
+  "related_to",
   "replaces",
   "contradicts",
-  "related_to",
-  "part_of",
+  "requires",
+  "produces",
+  "affects",
+  "mitigates",
+  "signed_by",
   "owned_by",
   "documented_in"
 ]);
@@ -113,6 +120,61 @@ export const conceptRecordSchema = z.object({
 });
 export type ConceptRecord = z.infer<typeof conceptRecordSchema>;
 
+export const conceptReferenceSchema = z.object({
+  id: z.string().uuid(),
+  slug: z.string(),
+  title: z.string(),
+  type: conceptTypeSchema
+});
+export type ConceptReference = z.infer<typeof conceptReferenceSchema>;
+
+export const relationshipRecordSchema = z.object({
+  id: z.string().uuid(),
+  workspaceId: z.string().uuid(),
+  sourceConceptId: z.string().uuid(),
+  targetConceptId: z.string().uuid(),
+  sourceConcept: conceptReferenceSchema,
+  targetConcept: conceptReferenceSchema,
+  type: relationshipTypeSchema,
+  description: z.string(),
+  confidence: z.number().min(0).max(1),
+  sourceRevisionId: z.string().uuid().nullable(),
+  sourceSectionId: z.string().uuid().nullable(),
+  citation: sourceCitationSchema.nullable(),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime()
+});
+export type RelationshipRecord = z.infer<typeof relationshipRecordSchema>;
+
+export const unresolvedRelationshipStatusSchema = z.enum(["pending", "resolved", "ignored"]);
+export type UnresolvedRelationshipStatus = z.infer<typeof unresolvedRelationshipStatusSchema>;
+
+export const unresolvedRelationshipRecordSchema = z.object({
+  id: z.string().uuid(),
+  workspaceId: z.string().uuid(),
+  sourceConceptId: z.string().uuid(),
+  sourceConceptSlug: z.string(),
+  targetConceptSlug: z.string(),
+  targetTitle: z.string(),
+  type: relationshipTypeSchema,
+  description: z.string(),
+  confidence: z.number().min(0).max(1),
+  sourceRevisionId: z.string().uuid(),
+  sourceSectionId: z.string().uuid(),
+  citation: sourceCitationSchema.nullable(),
+  status: unresolvedRelationshipStatusSchema,
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime()
+});
+export type UnresolvedRelationshipRecord = z.infer<typeof unresolvedRelationshipRecordSchema>;
+
+export const conceptRelationshipsSchema = z.object({
+  incoming: z.array(relationshipRecordSchema),
+  outgoing: z.array(relationshipRecordSchema),
+  unresolved: z.array(unresolvedRelationshipRecordSchema)
+});
+export type ConceptRelationships = z.infer<typeof conceptRelationshipsSchema>;
+
 export const retrievalExplanationSchema = z.object({
   vectorScore: z.number().min(0).max(1),
   keywordScore: z.number().min(0).max(1),
@@ -177,7 +239,8 @@ export type ListConceptsResponse = z.infer<typeof listConceptsResponseSchema>;
 
 export const conceptDetailResponseSchema = z.object({
   concept: conceptRecordSchema,
-  claims: z.array(claimRecordSchema)
+  claims: z.array(claimRecordSchema),
+  relationships: conceptRelationshipsSchema
 });
 export type ConceptDetailResponse = z.infer<typeof conceptDetailResponseSchema>;
 

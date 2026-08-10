@@ -3,6 +3,7 @@ import {
   type IngestMarkdownResponse,
   type Metadata,
   type SourceKind,
+  DuplicateSourceRevisionError,
   ingestMarkdownRequestSchema,
   sha256Hex
 } from "@knowledgeos/shared";
@@ -73,13 +74,11 @@ export async function ingestMarkdown(
   const existingRevision = await deps.repository.findSourceRevisionByHash(source.id, contentHash);
   if (existingRevision) {
     const sectionCount = await deps.repository.countSourceSections(existingRevision.id);
-    return {
+    throw new DuplicateSourceRevisionError("This note has already been added", {
       sourceId: source.id,
       sourceRevisionId: existingRevision.id,
-      changed: false,
-      sectionCount,
-      extractionJobId: null
-    };
+      sectionCount
+    });
   }
 
   const revision = await deps.repository.createSourceRevision({
@@ -121,4 +120,3 @@ export async function ingestMarkdown(
     extractionJobId
   };
 }
-
