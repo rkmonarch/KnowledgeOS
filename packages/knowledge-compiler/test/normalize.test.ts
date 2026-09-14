@@ -109,4 +109,40 @@ describe("normalizeExtraction", () => {
       }
     ]);
   });
+
+  it("normalizes common model relationship aliases before persistence", () => {
+    const parsed = extractionOutputSchema.parse({
+      concepts: [
+        {
+          title: "Recipient",
+          summary: "Payment recipient",
+          body: "The recipient receives settled funds from Atlas.",
+          type: "term",
+          tags: [],
+          confidence: 0.82,
+          owner: null,
+          status: "active",
+          claims: [],
+          relationships: [
+            {
+              type: "received",
+              targetTitle: "Settled Funds",
+              description: "The recipient receives settled funds.",
+              confidence: 0.76
+            },
+            {
+              type: "provides",
+              targetTitle: "Route Quote",
+              description: "Atlas provides a route quote.",
+              confidence: 0.79
+            }
+          ]
+        }
+      ]
+    });
+
+    const [concept] = normalizeExtraction(section, parsed);
+
+    expect(concept?.relationships.map((relationship) => relationship.type)).toEqual(["related_to", "produces"]);
+  });
 });

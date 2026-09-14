@@ -239,6 +239,11 @@ h3 {
   padding: 16px;
 }
 
+.graphSurface {
+  margin-bottom: 16px;
+  padding: 16px;
+}
+
 .conceptsSurface,
 .searchSurface {
   max-height: calc(100vh - 180px);
@@ -263,6 +268,59 @@ h3 {
 
 .sectionTitle svg {
   color: var(--accent);
+}
+
+.graphHeader {
+  align-items: flex-start;
+  margin-bottom: 12px;
+}
+
+.graphHeader .sectionTitle {
+  align-items: flex-start;
+}
+
+.graphHeader p {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.graphActions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.segmentedControl {
+  display: inline-flex;
+  align-items: center;
+  height: 34px;
+  padding: 3px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-muted);
+}
+
+.segmentedControl button {
+  height: 26px;
+  min-width: 64px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.segmentedControl button.active {
+  background: #fff;
+  color: var(--accent-strong);
+  box-shadow: 0 1px 4px rgba(24, 34, 53, 0.08);
 }
 
 .sectionMeta {
@@ -404,6 +462,226 @@ h3 {
   white-space: nowrap;
 }
 
+.secondaryIconButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: #fff;
+  color: var(--muted);
+}
+
+.secondaryIconButton:hover {
+  border-color: var(--accent);
+  color: var(--accent-strong);
+}
+
+.graphCanvasFrame {
+  position: relative;
+  height: 420px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background:
+    linear-gradient(180deg, rgba(248, 250, 252, 0.84), rgba(255, 255, 255, 0.92)),
+    #fff;
+}
+
+.graphCanvas {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+
+.graphViewportActions {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 6;
+  display: flex;
+  gap: 7px;
+}
+
+.graphNotice {
+  position: absolute;
+  left: 50%;
+  bottom: 18px;
+  z-index: 6;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  max-width: calc(100% - 32px);
+  min-height: 34px;
+  padding: 7px 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.94);
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  box-shadow: 0 8px 20px rgba(24, 34, 53, 0.08);
+  transform: translateX(-50%);
+}
+
+.conceptGraphNode {
+  display: grid;
+  gap: 5px;
+  width: 180px;
+  min-height: 82px;
+  padding: 10px 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 12px 26px rgba(24, 34, 53, 0.12);
+}
+
+.conceptGraphNode.selected,
+.conceptGraphNode.focused {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 4px rgba(15, 118, 110, 0.12), 0 14px 30px rgba(24, 34, 53, 0.14);
+}
+
+.conceptGraphNode.incoming {
+  border-color: #93c5fd;
+}
+
+.conceptGraphNode.outgoing {
+  border-color: #99f6e4;
+}
+
+.conceptGraphNode.both {
+  border-color: #fbbf24;
+}
+
+.conceptGraphNode.expanded {
+  background: var(--surface-muted);
+}
+
+.graphNodeType {
+  color: var(--accent-strong);
+  font-size: 10px;
+  font-weight: 950;
+  line-height: 1.2;
+  text-transform: uppercase;
+}
+
+.graphNodeTitle {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 900;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.graphNodeMeta {
+  color: var(--subtle);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.graphHandle {
+  opacity: 0;
+}
+
+.graphCanvas .react-flow__node {
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.graphCanvas .react-flow__edge-path {
+  stroke: var(--subtle);
+  stroke-width: 1.8;
+}
+
+.graphCanvas .react-flow__edge.active .react-flow__edge-path {
+  stroke: var(--accent);
+  stroke-width: 2.3;
+}
+
+.graphCanvas .react-flow__controls {
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(24, 34, 53, 0.12);
+}
+
+.graphCanvas .react-flow__controls-button {
+  border-bottom-color: var(--line);
+}
+
+.graphEmpty {
+  height: 100%;
+  border: 0;
+  border-radius: 0;
+  justify-content: center;
+}
+
+.graphSkeleton {
+  position: relative;
+  height: 100%;
+}
+
+.graphSkeletonNode {
+  position: absolute;
+  width: 160px;
+  height: 70px;
+  border-radius: 8px;
+}
+
+.graphSkeletonNode.center {
+  top: calc(50% - 35px);
+  left: calc(50% - 80px);
+}
+
+.graphSkeletonNode.topLeft {
+  top: 58px;
+  left: 17%;
+}
+
+.graphSkeletonNode.topRight {
+  top: 58px;
+  right: 17%;
+}
+
+.graphSkeletonNode.bottomLeft {
+  bottom: 58px;
+  left: 22%;
+}
+
+.graphSkeletonNode.bottomRight {
+  right: 22%;
+  bottom: 58px;
+}
+
+.graphSkeletonEdge {
+  position: absolute;
+  width: 180px;
+  height: 8px;
+  border-radius: 999px;
+}
+
+.graphSkeletonEdge.edgeOne {
+  top: 45%;
+  left: 31%;
+  transform: rotate(-26deg);
+}
+
+.graphSkeletonEdge.edgeTwo {
+  top: 45%;
+  right: 31%;
+  transform: rotate(26deg);
+}
+
+.graphSkeletonEdge.edgeThree {
+  bottom: 35%;
+  left: 43%;
+  transform: rotate(90deg);
+}
+
 .jobPanel {
   display: grid;
   gap: 12px;
@@ -540,6 +818,13 @@ h3 {
 .jobStatus.failed {
   background: var(--red-soft);
   color: var(--red);
+}
+
+.jobActions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 7px;
 }
 
 .emptyState.compact {
@@ -983,6 +1268,12 @@ h3 {
   font-weight: 700;
 }
 
+.emptyState.errorState {
+  border-color: rgba(180, 35, 24, 0.32);
+  background: var(--red-soft);
+  color: var(--red);
+}
+
 @media (max-width: 1240px) {
   .workspaceGrid {
     grid-template-columns: minmax(320px, 420px) minmax(0, 1fr);
@@ -997,6 +1288,19 @@ h3 {
 @media (max-width: 820px) {
   .shell {
     padding: 16px;
+  }
+
+  .graphHeader {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .graphActions {
+    justify-content: flex-start;
+  }
+
+  .graphCanvasFrame {
+    height: 360px;
   }
 
   .statusBand {
@@ -1046,6 +1350,24 @@ h3 {
 
   .metricStrip {
     grid-template-columns: 1fr;
+  }
+
+  .segmentedControl {
+    width: 100%;
+  }
+
+  .segmentedControl button {
+    flex: 1 1 0;
+    min-width: 0;
+  }
+
+  .graphCanvasFrame {
+    height: 320px;
+  }
+
+  .conceptGraphNode {
+    width: 154px;
+    min-height: 76px;
   }
 
   .actionRow {

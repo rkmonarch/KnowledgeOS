@@ -34,10 +34,23 @@ export async function extractKnowledgeFromSection(
 
   const parsed = extractionOutputSchema.safeParse(rawOutput);
   if (!parsed.success) {
-    throw new ValidationBoundaryError("LLM extraction output failed schema validation", parsed.error.flatten());
+    throw new ValidationBoundaryError(
+      `LLM extraction output failed schema validation: ${formatFirstSchemaIssue(parsed.error)}`,
+      parsed.error.flatten()
+    );
   }
 
   return normalizeExtraction(section, parsed.data);
+}
+
+function formatFirstSchemaIssue(error: { issues: Array<{ path: Array<string | number>; message: string }> }): string {
+  const issue = error.issues[0];
+  if (!issue) {
+    return "unknown schema mismatch";
+  }
+
+  const path = issue.path.length > 0 ? issue.path.join(".") : "root";
+  return `${path} ${issue.message}`;
 }
 
 export async function compileSourceRevision(
@@ -68,4 +81,3 @@ export async function compileSourceRevision(
     concepts
   };
 }
-

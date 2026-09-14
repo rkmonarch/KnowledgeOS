@@ -42,7 +42,7 @@ export type ExtractedClaim = z.infer<typeof extractedClaimSchema>;
 
 export const extractedRelationshipSchema = z
   .object({
-    type: relationshipTypeSchema,
+    type: z.preprocess(normalizeRelationshipTypeAlias, relationshipTypeSchema),
     targetTitle: optionalModelStringSchema,
     targetSlug: optionalModelStringSchema,
     description: z.string().trim().optional().default(""),
@@ -54,6 +54,27 @@ export const extractedRelationshipSchema = z
     message: "Relationship must include targetTitle or targetSlug"
   });
 export type ExtractedRelationship = z.infer<typeof extractedRelationshipSchema>;
+
+function normalizeRelationshipTypeAlias(value: unknown): unknown {
+  if (typeof value !== "string") {
+    return value;
+  }
+
+  const normalized = value.trim().toLowerCase().replace(/[\s-]+/g, "_");
+  switch (normalized) {
+    case "provide":
+    case "provides":
+    case "provided":
+      return "produces";
+    case "receive":
+    case "receives":
+    case "received":
+    case "provided_by":
+      return "related_to";
+    default:
+      return normalized;
+  }
+}
 
 export const extractedConceptSchema = z
   .object({

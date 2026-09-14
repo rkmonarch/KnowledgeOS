@@ -12,11 +12,19 @@ interface KnowledgeOSRuntime {
 
 const globalRuntime = globalThis as typeof globalThis & {
   __knowledgeOSRuntime?: KnowledgeOSRuntime;
+  __knowledgeOSRuntimeRepositoryClass?: typeof KnowledgeRepository;
 };
 
 export function getKnowledgeOSRuntime(): KnowledgeOSRuntime {
-  if (globalRuntime.__knowledgeOSRuntime) {
+  if (
+    globalRuntime.__knowledgeOSRuntime &&
+    globalRuntime.__knowledgeOSRuntimeRepositoryClass === KnowledgeRepository
+  ) {
     return globalRuntime.__knowledgeOSRuntime;
+  }
+
+  if (globalRuntime.__knowledgeOSRuntime) {
+    void globalRuntime.__knowledgeOSRuntime.close().catch(() => undefined);
   }
 
   loadEnvFromNearestFile();
@@ -35,5 +43,6 @@ export function getKnowledgeOSRuntime(): KnowledgeOSRuntime {
   };
 
   globalRuntime.__knowledgeOSRuntime = runtime;
+  globalRuntime.__knowledgeOSRuntimeRepositoryClass = KnowledgeRepository;
   return runtime;
 }

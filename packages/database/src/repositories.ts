@@ -5,9 +5,12 @@ import {
   type ClaimStatus,
   type ConceptRelationships,
   type ConceptRecord,
+  type ConceptReference,
   type ConceptStatus,
   type ConceptType,
   type EmbeddableEntityType,
+  type GraphNeighborhoodResponse,
+  type GraphNodeRole,
   type JobRecord,
   type JobStatus,
   type JobType,
@@ -211,6 +214,21 @@ export interface SemanticSearchHit {
   claims: ClaimRecord[];
   vectorScore: number;
   citations: SourceCitation[];
+}
+
+export interface GraphNeighborhoodInput {
+  workspaceId: string;
+  conceptId: string;
+  depth: number;
+  limit: number;
+}
+
+export interface BuildGraphNeighborhoodInput {
+  workspaceId: string;
+  selectedConcept: ConceptRecord;
+  depth: number;
+  limit: number;
+  loadRelationshipsForFrontier: (frontierConceptIds: string[], remainingLimit: number) => Promise<RelationshipRecord[]>;
 }
 
 export class KnowledgeRepository {
@@ -420,6 +438,28 @@ export class KnowledgeRepository {
         updated_at = now()
       where id = ${jobId}
     `);
+  }
+
+  async retryFailedJob(workspaceId: string, jobId: string): Promise<string> {
+    const [retried] = await this.db
+      .update(jobs)
+      .set({
+        status: "queued",
+        attempts: 0,
+        runAfter: sql`now()`,
+        lockedAt: null,
+        lockedBy: null,
+        lastError: null,
+        updatedAt: sql`now()`
+      })
+      .where(and(eq(jobs.id, jobId), eq(jobs.workspaceId, workspaceId), eq(jobs.status, "failed")))
+      .returning({ id: jobs.id });
+
+    if (!retried) {
+      throw new NotFoundError("Failed job was not found", { workspaceId, jobId });
+    }
+
+    return retried.id;
   }
 
   async listJobs(workspaceId: string, limit = 50): Promise<JobRecord[]> {
@@ -936,6 +976,27 @@ export class KnowledgeRepository {
     };
   }
 
+  async getConceptGraphNeighborhood(input: GraphNeighborhoodInput): Promise<GraphNeighborhoodResponse> {
+    const selectedConcept = await this.getConcept(input.conceptId);
+    if (selectedConcept.workspaceId !== input.workspaceId) {
+      throw new NotFoundError("Concept was not found in workspace", input);
+    }
+
+    return buildConceptGraphNeighborhood({
+      workspaceId: input.workspaceId,
+      selectedConcept,
+      depth: input.depth,
+      limit: input.limit,
+      loadRelationshipsForFrontier: async (frontierConceptIds, remainingLimit) => {
+        const result = await this.db.execute(
+          relationshipNeighborhoodSql(input.workspaceId, frontierConceptIds, remainingLimit)
+        );
+        const rows = relationshipReadRowSchema.array().parse(rowsFromExecute(result));
+        return rows.map(toRelationshipRecord);
+      }
+    });
+  }
+
   async getEmbeddableEntity(input: {
     workspaceId: string;
     entityType: EmbeddableEntityType;
@@ -1214,6 +1275,190 @@ function relationshipSelectSql(workspaceId: string, conceptId: string, direction
   `;
 }
 
+function relationshipNeighborhoodSql(workspaceId: string, frontierConceptIds: string[], limit: number): SQL {
+  const frontierConceptIdList = sql.join(
+    frontierConceptIds.map((conceptId) => sql`${conceptId}::uuid`),
+    sql`, `
+  );
+
+  return sql`
+    select
+      r.id,
+      r.workspace_id,
+      r.source_concept_id,
+      r.target_concept_id,
+      r.type,
+      r.description,
+      r.confidence,
+      r.source_revision_id,
+      r.source_section_id,
+      r.created_at,
+      r.updated_at,
+      sc.slug as source_concept_slug,
+      sc.title as source_concept_title,
+      sc.type as source_concept_type,
+      tc.slug as target_concept_slug,
+      tc.title as target_concept_title,
+      tc.type as target_concept_type,
+      s.id as citation_source_id,
+      s.name as citation_source_name,
+      ss.heading_path as citation_heading_path,
+      ss.start_line as citation_start_line,
+      ss.end_line as citation_end_line
+    from relationships r
+    join concepts sc on sc.id = r.source_concept_id
+    join concepts tc on tc.id = r.target_concept_id
+    left join source_revisions sr on sr.id = r.source_revision_id
+    left join sources s on s.id = sr.source_id
+    left join source_sections ss on ss.id = r.source_section_id
+    where r.workspace_id = ${workspaceId}
+      and (
+        r.source_concept_id in (${frontierConceptIdList})
+        or r.target_concept_id in (${frontierConceptIdList})
+      )
+    order by r.updated_at desc, r.created_at desc
+    limit ${limit}
+  `;
+}
+
+export async function buildConceptGraphNeighborhood(
+  input: BuildGraphNeighborhoodInput
+): Promise<GraphNeighborhoodResponse> {
+  const depth = Math.max(1, Math.min(3, input.depth));
+  const limit = Math.max(1, Math.min(200, input.limit));
+  const selectedConceptRef: ConceptReference = {
+    id: input.selectedConcept.id,
+    slug: input.selectedConcept.slug,
+    title: input.selectedConcept.title,
+    type: input.selectedConcept.type
+  };
+  const edgesById = new Map<string, RelationshipRecord>();
+  const nodeRefsById = new Map([[selectedConceptRef.id, selectedConceptRef]]);
+  const distancesByConceptId = new Map([[selectedConceptRef.id, 0]]);
+  const rolesByConceptId = new Map([[selectedConceptRef.id, "selected" as GraphNodeRole]]);
+  const relationshipCountByConceptId = new Map<string, number>();
+  let frontierIds = new Set([selectedConceptRef.id]);
+
+  for (let currentDepth = 1; currentDepth <= depth; currentDepth += 1) {
+    if (frontierIds.size === 0 || edgesById.size >= limit) {
+      break;
+    }
+
+    const remaining = limit - edgesById.size;
+    const relationships = await input.loadRelationshipsForFrontier([...frontierIds], remaining);
+    const nextFrontierIds = new Set<string>();
+
+    for (const relationship of relationships.slice(0, remaining)) {
+      const sourceWasFrontier = frontierIds.has(relationship.sourceConceptId);
+      const targetWasFrontier = frontierIds.has(relationship.targetConceptId);
+
+      if (edgesById.has(relationship.id)) {
+        continue;
+      }
+
+      edgesById.set(relationship.id, relationship);
+      nodeRefsById.set(relationship.sourceConcept.id, relationship.sourceConcept);
+      nodeRefsById.set(relationship.targetConcept.id, relationship.targetConcept);
+
+      incrementRelationshipCount(relationshipCountByConceptId, relationship.sourceConceptId);
+      incrementRelationshipCount(relationshipCountByConceptId, relationship.targetConceptId);
+
+      if (sourceWasFrontier && !distancesByConceptId.has(relationship.targetConceptId)) {
+        distancesByConceptId.set(relationship.targetConceptId, currentDepth);
+        nextFrontierIds.add(relationship.targetConceptId);
+      }
+
+      if (targetWasFrontier && !distancesByConceptId.has(relationship.sourceConceptId)) {
+        distancesByConceptId.set(relationship.sourceConceptId, currentDepth);
+        nextFrontierIds.add(relationship.sourceConceptId);
+      }
+
+      if (currentDepth === 1) {
+        if (relationship.sourceConceptId === selectedConceptRef.id) {
+          mergeGraphNodeRole(rolesByConceptId, relationship.targetConceptId, "outgoing");
+        }
+        if (relationship.targetConceptId === selectedConceptRef.id) {
+          mergeGraphNodeRole(rolesByConceptId, relationship.sourceConceptId, "incoming");
+        }
+      } else {
+        if (sourceWasFrontier) {
+          mergeGraphNodeRole(rolesByConceptId, relationship.targetConceptId, "expanded");
+        }
+        if (targetWasFrontier) {
+          mergeGraphNodeRole(rolesByConceptId, relationship.sourceConceptId, "expanded");
+        }
+      }
+    }
+
+    frontierIds = nextFrontierIds;
+  }
+
+  const edges = [...edgesById.values()].map((relationship) => ({
+    id: relationship.id,
+    sourceConceptId: relationship.sourceConceptId,
+    targetConceptId: relationship.targetConceptId,
+    type: relationship.type,
+    label: formatRelationshipTypeLabel(relationship.type),
+    description: relationship.description,
+    confidence: relationship.confidence,
+    citation: relationship.citation
+  }));
+
+  const nodes = [...nodeRefsById.values()]
+    .map((concept) => ({
+      id: concept.id,
+      concept,
+      distance: distancesByConceptId.get(concept.id) ?? depth,
+      role: rolesByConceptId.get(concept.id) ?? "expanded",
+      relationshipCount: relationshipCountByConceptId.get(concept.id) ?? 0
+    }))
+    .sort((left, right) => {
+      if (left.id === selectedConceptRef.id) {
+        return -1;
+      }
+      if (right.id === selectedConceptRef.id) {
+        return 1;
+      }
+      return left.distance - right.distance || left.concept.title.localeCompare(right.concept.title);
+    });
+
+  return {
+    workspaceId: input.workspaceId,
+    selectedConceptId: selectedConceptRef.id,
+    depth,
+    nodes,
+    edges
+  };
+}
+
+function incrementRelationshipCount(counts: Map<string, number>, conceptId: string): void {
+  counts.set(conceptId, (counts.get(conceptId) ?? 0) + 1);
+}
+
+function mergeGraphNodeRole(
+  roles: Map<string, GraphNodeRole>,
+  conceptId: string,
+  role: Exclude<GraphNodeRole, "selected" | "both">
+): void {
+  const existing = roles.get(conceptId);
+  if (!existing || existing === "expanded") {
+    roles.set(conceptId, role);
+    return;
+  }
+
+  if (existing === "selected" || existing === role) {
+    return;
+  }
+
+  if (
+    (existing === "incoming" && role === "outgoing") ||
+    (existing === "outgoing" && role === "incoming") ||
+    existing === "both"
+  ) {
+    roles.set(conceptId, "both");
+  }
+}
+
 const relationshipReadRowSchema = z.object({
   id: z.string().uuid(),
   workspace_id: z.string().uuid(),
@@ -1358,6 +1603,41 @@ function toNullableCitation(input: {
     startLine: input.startLine,
     endLine: input.endLine
   };
+}
+
+function formatRelationshipTypeLabel(type: RelationshipType): string {
+  switch (type) {
+    case "depends_on":
+      return "Depends on";
+    case "used_by":
+      return "Used by";
+    case "uses":
+      return "Uses";
+    case "implements":
+      return "Implements";
+    case "part_of":
+      return "Part of";
+    case "related_to":
+      return "Related to";
+    case "replaces":
+      return "Replaces";
+    case "contradicts":
+      return "Contradicts";
+    case "requires":
+      return "Requires";
+    case "produces":
+      return "Produces";
+    case "affects":
+      return "Affects";
+    case "mitigates":
+      return "Mitigates";
+    case "signed_by":
+      return "Signed by";
+    case "owned_by":
+      return "Owned by";
+    case "documented_in":
+      return "Documented in";
+  }
 }
 
 const claimedJobRowSchema = z.object({

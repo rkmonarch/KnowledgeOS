@@ -2,6 +2,7 @@ import { hostname } from "node:os";
 import { randomUUID } from "node:crypto";
 import {
   type Logger,
+  KnowledgeOSError,
   createConsoleLogger,
   embeddingJobPayloadSchema,
   extractionJobPayloadSchema,
@@ -151,10 +152,30 @@ export async function runWorkerOnce(options: WorkerOptions): Promise<boolean> {
     logger.info("Completed job", { jobId: job.id, jobType: job.type });
     return true;
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
+    const message = formatJobErrorMessage(error);
     logger.error("Job failed", { jobId: job.id, jobType: job.type }, error instanceof Error ? error : undefined);
     await options.repository.failJob(job.id, message);
     return true;
+  }
+}
+
+function formatJobErrorMessage(error: unknown): string {
+  if (error instanceof KnowledgeOSError && error.details) {
+    return `${error.message} (${formatErrorDetails(error.details)})`;
+  }
+
+  return error instanceof Error ? error.message : String(error);
+}
+
+function formatErrorDetails(details: unknown): string {
+  if (typeof details === "string") {
+    return details.slice(0, 240);
+  }
+
+  try {
+    return JSON.stringify(details).slice(0, 240);
+  } catch {
+    return String(details).slice(0, 240);
   }
 }
 

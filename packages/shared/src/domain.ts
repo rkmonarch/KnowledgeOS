@@ -175,6 +175,39 @@ export const conceptRelationshipsSchema = z.object({
 });
 export type ConceptRelationships = z.infer<typeof conceptRelationshipsSchema>;
 
+export const graphNodeRoleSchema = z.enum(["selected", "incoming", "outgoing", "both", "expanded"]);
+export type GraphNodeRole = z.infer<typeof graphNodeRoleSchema>;
+
+export const graphNodeSchema = z.object({
+  id: z.string().uuid(),
+  concept: conceptReferenceSchema,
+  distance: z.number().int().nonnegative(),
+  role: graphNodeRoleSchema,
+  relationshipCount: z.number().int().nonnegative()
+});
+export type GraphNode = z.infer<typeof graphNodeSchema>;
+
+export const graphEdgeSchema = z.object({
+  id: z.string().uuid(),
+  sourceConceptId: z.string().uuid(),
+  targetConceptId: z.string().uuid(),
+  type: relationshipTypeSchema,
+  label: z.string(),
+  description: z.string(),
+  confidence: z.number().min(0).max(1),
+  citation: sourceCitationSchema.nullable()
+});
+export type GraphEdge = z.infer<typeof graphEdgeSchema>;
+
+export const graphNeighborhoodResponseSchema = z.object({
+  workspaceId: z.string().uuid(),
+  selectedConceptId: z.string().uuid(),
+  depth: z.number().int().positive(),
+  nodes: z.array(graphNodeSchema),
+  edges: z.array(graphEdgeSchema)
+});
+export type GraphNeighborhoodResponse = z.infer<typeof graphNeighborhoodResponseSchema>;
+
 export const retrievalExplanationSchema = z.object({
   vectorScore: z.number().min(0).max(1),
   keywordScore: z.number().min(0).max(1),
@@ -248,6 +281,17 @@ export const listJobsResponseSchema = z.object({
   jobs: z.array(jobRecordSchema)
 });
 export type ListJobsResponse = z.infer<typeof listJobsResponseSchema>;
+
+export const retryJobRequestSchema = z.object({
+  workspaceId: z.string().uuid(),
+  jobId: z.string().uuid()
+});
+export type RetryJobRequest = z.infer<typeof retryJobRequestSchema>;
+
+export const retryJobResponseSchema = z.object({
+  jobId: z.string().uuid()
+});
+export type RetryJobResponse = z.infer<typeof retryJobResponseSchema>;
 
 export const workspaceRecordSchema = z.object({
   id: z.string().uuid(),

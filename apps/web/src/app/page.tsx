@@ -9,16 +9,34 @@ import {
   Database,
   FileText,
   GitBranch,
+  LocateFixed,
+  Maximize2,
   RefreshCw,
   Search,
   Send,
   UploadCloud
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  Background,
+  Controls,
+  Handle,
+  MarkerType,
+  Position,
+  ReactFlow,
+  ReactFlowProvider,
+  useReactFlow,
+  type Edge as FlowEdge,
+  type Node as FlowNode,
+  type NodeProps
+} from "@xyflow/react";
 import { createKnowledgeOSClient } from "@knowledgeos/sdk";
 import type {
   ConceptDetailResponse,
   ConceptRecord,
+  ConceptType,
+  GraphNeighborhoodResponse,
+  GraphNodeRole,
   JobRecord,
   RelationshipRecord,
   RelationshipType,
@@ -49,6 +67,10 @@ export default function DashboardPage() {
   const [selectedConceptId, setSelectedConceptId] = useState<string | null>(null);
   const [conceptDetail, setConceptDetail] = useState<ConceptDetailResponse | null>(null);
   const [isLoadingConcept, setIsLoadingConcept] = useState(false);
+  const [graph, setGraph] = useState<GraphNeighborhoodResponse | null>(null);
+  const [graphError, setGraphError] = useState<string | null>(null);
+  const [graphDepth, setGraphDepth] = useState(1);
+  const [isLoadingGraph, setIsLoadingGraph] = useState(false);
   const [jobs, setJobs] = useState<JobRecord[]>([]);
   const [query, setQuery] = useState("How does authentication work?");
   const [results, setResults] = useState<RetrievalResult[]>([]);
@@ -59,6 +81,7 @@ export default function DashboardPage() {
   const [isRefreshingDashboard, setIsRefreshingDashboard] = useState(false);
   const [isIngesting, setIsIngesting] = useState(false);
   const [isSearching, setIsSearching] = useState(false);
+  const [retryingJobId, setRetryingJobId] = useState<string | null>(null);
   const markdownStats = useMemo(() => getTextStats(markdown), [markdown]);
   const jobStats = useMemo(() => summarizeJobs(jobs), [jobs]);
   const activeJobCount = jobStats.queued + jobStats.running;
@@ -87,11 +110,14 @@ export default function DashboardPage() {
 
   useEffect(() => {
     if (!workspaceId || !selectedConceptId) {
+      setGraph(null);
+      setGraphError(null);
       return;
     }
 
     void loadConceptDetail(workspaceId, selectedConceptId);
-  }, [workspaceId, selectedConceptId]);
+    void loadGraphNeighborhood(workspaceId, selectedConceptId, graphDepth);
+  }, [workspaceId, selectedConceptId, graphDepth]);
 
   useEffect(() => {
     if (!workspaceId) {
@@ -141,10 +167,19 @@ export default function DashboardPage() {
     }
 
     try {
-      await Promise.all([refreshConcepts(id), refreshJobs(id)]);
-    } catch (error) {
-      setStatus(error instanceof Error ? error.message : "Dashboard refresh failed");
-      setStatusTone("error");
+      const refreshes = await Promise.allSettled([
+        refreshConcepts(id),
+        refreshJobs(id),
+        selectedConceptId
+          ? loadGraphNeighborhood(id, selectedConceptId, graphDepth, { silent: true })
+          : Promise.resolve()
+      ]);
+      const failedRefresh = refreshes.find((result) => result.status === "rejected");
+
+      if (failedRefresh?.status === "rejected") {
+        setStatus(failedRefresh.reason instanceof Error ? failedRefresh.reason.message : "Dashboard refresh partially failed");
+        setStatusTone("error");
+      }
     } finally {
       dashboardRefreshInFlightRef.current = false;
       if (!options.silent) {
@@ -184,6 +219,43 @@ export default function DashboardPage() {
       setStatusTone("error");
     } finally {
       setIsLoadingConcept(false);
+    }
+  }
+
+  async function loadGraphNeighborhood(
+    id = workspaceId,
+    conceptId = selectedConceptId,
+    depth = graphDepth,
+    options: Readonly<{ silent?: boolean }> = {}
+  ): Promise<void> {
+    if (!id || !conceptId) {
+      setGraph(null);
+      setGraphError(null);
+      return;
+    }
+
+    if (!options.silent) {
+      setIsLoadingGraph(true);
+    }
+
+    try {
+      setGraphError(null);
+      const response = await client.getGraphNeighborhood({
+        workspaceId: id,
+        conceptId,
+        depth,
+        limit: 80
+      });
+      setGraph(response);
+    } catch (error) {
+      setGraphError(error instanceof Error ? error.message : "Graph load failed");
+      if (!options.silent) {
+        setGraph(null);
+      }
+    } finally {
+      if (!options.silent) {
+        setIsLoadingGraph(false);
+      }
     }
   }
 
@@ -241,6 +313,25 @@ export default function DashboardPage() {
     }
   }
 
+  async function retryJob(jobId: string): Promise<void> {
+    if (!workspaceId) {
+      return;
+    }
+
+    setRetryingJobId(jobId);
+    try {
+      await client.retryJob({ workspaceId, jobId });
+      setStatus("Job queued for retry");
+      setStatusTone("neutral");
+      await refreshJobs(workspaceId);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Job retry failed");
+      setStatusTone("error");
+    } finally {
+      setRetryingJobId(null);
+    }
+  }
+
   return (
     <main className="shell">
       <header className="topbar">
@@ -278,6 +369,18 @@ export default function DashboardPage() {
           <Metric label="Lines" value={markdownStats.lines.toString()} />
         </div>
       </section>
+
+      <KnowledgeGraphPanel
+        graph={graph}
+        error={graphError}
+        depth={graphDepth}
+        isLoading={isLoadingGraph || isConceptListLoading}
+        selectedConceptId={selectedConceptId}
+        selectedConceptTitle={conceptDetail?.concept.title ?? concepts.find((concept) => concept.id === selectedConceptId)?.title ?? null}
+        onDepthChange={setGraphDepth}
+        onRefresh={() => void loadGraphNeighborhood()}
+        onSelectConcept={setSelectedConceptId}
+      />
 
       <div className="workspaceGrid">
         <section className="surface ingestSurface">
@@ -324,7 +427,13 @@ export default function DashboardPage() {
                   : "Waiting for API"}
             </span>
           </div>
-          <JobMonitor jobs={jobs} stats={jobStats} isLoading={isJobListLoading} />
+          <JobMonitor
+            jobs={jobs}
+            stats={jobStats}
+            isLoading={isJobListLoading}
+            retryingJobId={retryingJobId}
+            onRetryJob={(jobId) => void retryJob(jobId)}
+          />
         </section>
 
         <section className="surface conceptsSurface">
@@ -434,6 +543,205 @@ export default function DashboardPage() {
         </section>
       </div>
     </main>
+  );
+}
+
+function KnowledgeGraphPanel({
+  graph,
+  error,
+  depth,
+  isLoading,
+  selectedConceptId,
+  selectedConceptTitle,
+  onDepthChange,
+  onRefresh,
+  onSelectConcept
+}: Readonly<{
+  graph: GraphNeighborhoodResponse | null;
+  error: string | null;
+  depth: number;
+  isLoading: boolean;
+  selectedConceptId: string | null;
+  selectedConceptTitle: string | null;
+  onDepthChange: (depth: number) => void;
+  onRefresh: () => void;
+  onSelectConcept: (conceptId: string) => void;
+}>) {
+  const nodeCount = graph?.nodes.length ?? 0;
+  const edgeCount = graph?.edges.length ?? 0;
+
+  return (
+    <section className="surface graphSurface">
+      <div className="sectionHeader graphHeader">
+        <div className="sectionTitle">
+          <GitBranch size={19} />
+          <div>
+            <h2>Knowledge Graph</h2>
+            <p>{selectedConceptTitle ? `Neighborhood for ${selectedConceptTitle}` : "Select a concept to explore relationships"}</p>
+          </div>
+        </div>
+        <div className="graphActions">
+          <div className="segmentedControl" aria-label="Graph depth">
+            {[1, 2, 3].map((value) => (
+              <button
+                className={value === depth ? "active" : ""}
+                key={value}
+                type="button"
+                disabled={!selectedConceptId || isLoading}
+                onClick={() => onDepthChange(value)}
+              >
+                {value} hop{value === 1 ? "" : "s"}
+              </button>
+            ))}
+          </div>
+          <button
+            className="iconButton dark"
+            type="button"
+            disabled={!selectedConceptId || isLoading}
+            onClick={onRefresh}
+            title="Refresh graph"
+          >
+            <RefreshCw className={isLoading ? "spin" : undefined} size={17} />
+          </button>
+          <span className="sectionMeta">
+            {nodeCount} nodes · {edgeCount} edges
+          </span>
+        </div>
+      </div>
+
+      <div className="graphCanvasFrame">
+        {isLoading ? (
+          <GraphSkeleton />
+        ) : error ? (
+          <div className="emptyState graphEmpty errorState">
+            <AlertCircle size={18} />
+            <span>{error}</span>
+          </div>
+        ) : !graph || graph.nodes.length === 0 ? (
+          <div className="emptyState graphEmpty">
+            <GitBranch size={18} />
+            <span>No graph neighborhood yet</span>
+          </div>
+        ) : (
+          <ReactFlowProvider>
+            <KnowledgeGraphCanvas graph={graph} onSelectConcept={onSelectConcept} />
+          </ReactFlowProvider>
+        )}
+        {!isLoading && !error && graph && graph.nodes.length === 1 && graph.edges.length === 0 ? (
+          <div className="graphNotice">
+            <GitBranch size={15} />
+            <span>No resolved relationships for this concept yet</span>
+          </div>
+        ) : null}
+      </div>
+    </section>
+  );
+}
+
+type ConceptFlowNode = FlowNode<ConceptFlowNodeData, "concept">;
+type ConceptFlowEdge = FlowEdge<{ confidence: number; description: string }, "smoothstep">;
+
+interface ConceptFlowNodeData extends Record<string, unknown> {
+  title: string;
+  conceptType: ConceptType;
+  role: GraphNodeRole;
+  distance: number;
+  relationshipCount: number;
+}
+
+function KnowledgeGraphCanvas({
+  graph,
+  onSelectConcept
+}: Readonly<{
+  graph: GraphNeighborhoodResponse;
+  onSelectConcept: (conceptId: string) => void;
+}>) {
+  const { nodes, edges, selectedPosition } = useMemo(() => buildFlowGraph(graph), [graph]);
+
+  return (
+    <div className="graphCanvas">
+      <GraphViewportActions selectedPosition={selectedPosition} />
+      <ReactFlow<ConceptFlowNode, ConceptFlowEdge>
+        nodes={nodes}
+        edges={edges}
+        nodeTypes={conceptNodeTypes}
+        fitView
+        fitViewOptions={{ padding: 0.22 }}
+        minZoom={0.35}
+        maxZoom={1.7}
+        nodeOrigin={[0.5, 0.5]}
+        nodesDraggable={false}
+        nodesConnectable={false}
+        edgesFocusable={false}
+        onNodeClick={(_event, node) => onSelectConcept(node.id)}
+        proOptions={{ hideAttribution: true }}
+      >
+        <Background color="#d9e0ea" gap={20} size={1} />
+        <Controls position="bottom-right" showInteractive={false} />
+      </ReactFlow>
+    </div>
+  );
+}
+
+function GraphViewportActions({
+  selectedPosition
+}: Readonly<{
+  selectedPosition: { x: number; y: number };
+}>) {
+  const reactFlow = useReactFlow<ConceptFlowNode, ConceptFlowEdge>();
+
+  return (
+    <div className="graphViewportActions">
+      <button
+        className="secondaryIconButton"
+        type="button"
+        onClick={() => reactFlow.fitView({ duration: 220, padding: 0.22 })}
+        title="Reset graph view"
+      >
+        <Maximize2 size={15} />
+      </button>
+      <button
+        className="secondaryIconButton"
+        type="button"
+        onClick={() => reactFlow.setCenter(selectedPosition.x, selectedPosition.y, { duration: 220, zoom: 1.15 })}
+        title="Focus selected concept"
+      >
+        <LocateFixed size={15} />
+      </button>
+    </div>
+  );
+}
+
+function ConceptGraphNode({ data, selected }: NodeProps<ConceptFlowNode>) {
+  return (
+    <div className={`conceptGraphNode ${data.role} ${selected ? "focused" : ""}`}>
+      <Handle className="graphHandle" type="target" position={Position.Top} />
+      <div className="graphNodeType">{data.conceptType}</div>
+      <div className="graphNodeTitle">{data.title}</div>
+      <div className="graphNodeMeta">
+        {data.relationshipCount} edge{data.relationshipCount === 1 ? "" : "s"}
+      </div>
+      <Handle className="graphHandle" type="source" position={Position.Bottom} />
+    </div>
+  );
+}
+
+const conceptNodeTypes = {
+  concept: ConceptGraphNode
+};
+
+function GraphSkeleton() {
+  return (
+    <div className="graphSkeleton" aria-label="Loading graph">
+      <SkeletonBlock className="graphSkeletonNode center" />
+      <SkeletonBlock className="graphSkeletonNode topLeft" />
+      <SkeletonBlock className="graphSkeletonNode topRight" />
+      <SkeletonBlock className="graphSkeletonNode bottomLeft" />
+      <SkeletonBlock className="graphSkeletonNode bottomRight" />
+      <SkeletonBlock className="graphSkeletonEdge edgeOne" />
+      <SkeletonBlock className="graphSkeletonEdge edgeTwo" />
+      <SkeletonBlock className="graphSkeletonEdge edgeThree" />
+    </div>
   );
 }
 
@@ -657,7 +965,19 @@ interface JobStats {
   failed: number;
 }
 
-function JobMonitor({ jobs, stats, isLoading }: Readonly<{ jobs: JobRecord[]; stats: JobStats; isLoading: boolean }>) {
+function JobMonitor({
+  jobs,
+  stats,
+  isLoading,
+  retryingJobId,
+  onRetryJob
+}: Readonly<{
+  jobs: JobRecord[];
+  stats: JobStats;
+  isLoading: boolean;
+  retryingJobId: string | null;
+  onRetryJob: (jobId: string) => void;
+}>) {
   const progress = stats.total === 0 ? 0 : Math.round((stats.completed / stats.total) * 100);
   const latestJobs = jobs.slice(0, 6);
 
@@ -709,7 +1029,20 @@ function JobMonitor({ jobs, stats, isLoading }: Readonly<{ jobs: JobRecord[]; st
                 </div>
                 {job.lastError ? <div className="jobError">{job.lastError}</div> : null}
               </div>
-              <span className={`jobStatus ${job.status}`}>{job.status}</span>
+              <div className="jobActions">
+                {job.status === "failed" ? (
+                  <button
+                    className="secondaryIconButton"
+                    type="button"
+                    disabled={retryingJobId === job.id}
+                    onClick={() => onRetryJob(job.id)}
+                    title="Retry job"
+                  >
+                    <RefreshCw className={retryingJobId === job.id ? "spin" : undefined} size={14} />
+                  </button>
+                ) : null}
+                <span className={`jobStatus ${job.status}`}>{job.status}</span>
+              </div>
             </div>
           ))
         )}
@@ -757,6 +1090,94 @@ function SkeletonBlock({ className }: Readonly<{ className: string }>) {
 
 function classNames(...values: Array<string | null>): string {
   return values.filter(Boolean).join(" ");
+}
+
+function buildFlowGraph(graph: GraphNeighborhoodResponse): {
+  nodes: ConceptFlowNode[];
+  edges: ConceptFlowEdge[];
+  selectedPosition: { x: number; y: number };
+} {
+  const selectedPosition = { x: 0, y: 0 };
+  const selectedNode = graph.nodes.find((node) => node.id === graph.selectedConceptId);
+  const otherNodes = graph.nodes.filter((node) => node.id !== graph.selectedConceptId);
+  const groupsByDistance = new Map<number, typeof otherNodes>();
+
+  for (const node of otherNodes) {
+    const group = groupsByDistance.get(node.distance) ?? [];
+    group.push(node);
+    groupsByDistance.set(node.distance, group);
+  }
+
+  const positionsByNodeId = new Map<string, { x: number; y: number }>();
+  positionsByNodeId.set(graph.selectedConceptId, selectedPosition);
+
+  for (const [distance, nodes] of [...groupsByDistance.entries()].sort(([left], [right]) => left - right)) {
+    const radius = 250 * Math.max(1, distance);
+    const angleOffset = nodes.length === 1 ? -Math.PI / 2 : -Math.PI / 2 - Math.PI / nodes.length;
+
+    nodes.forEach((node, index) => {
+      const angle = angleOffset + (index * Math.PI * 2) / nodes.length;
+      positionsByNodeId.set(node.id, {
+        x: Math.round(Math.cos(angle) * radius),
+        y: Math.round(Math.sin(angle) * radius)
+      });
+    });
+  }
+
+  const nodes: ConceptFlowNode[] = [
+    ...(selectedNode ? [selectedNode] : []),
+    ...otherNodes
+  ].map((node) => ({
+    id: node.id,
+    type: "concept",
+    position: positionsByNodeId.get(node.id) ?? selectedPosition,
+    selected: node.id === graph.selectedConceptId,
+    data: {
+      title: node.concept.title,
+      conceptType: node.concept.type,
+      role: node.role,
+      distance: node.distance,
+      relationshipCount: node.relationshipCount
+    },
+    className: `flowNodeShell ${node.role}`
+  }));
+
+  const edges: ConceptFlowEdge[] = graph.edges.map((edge) => {
+    const touchesSelected =
+      edge.sourceConceptId === graph.selectedConceptId || edge.targetConceptId === graph.selectedConceptId;
+
+    return {
+      id: edge.id,
+      source: edge.sourceConceptId,
+      target: edge.targetConceptId,
+      type: "smoothstep",
+      label: edge.label,
+      data: {
+        confidence: edge.confidence,
+        description: edge.description
+      },
+      markerEnd: {
+        type: MarkerType.ArrowClosed,
+        color: touchesSelected ? "#0f766e" : "#8a94a6"
+      },
+      className: touchesSelected ? "graphEdge active" : "graphEdge",
+      labelShowBg: true,
+      labelBgPadding: [6, 3],
+      labelBgBorderRadius: 5,
+      labelBgStyle: {
+        fill: "#ffffff",
+        stroke: "#d9e0ea",
+        strokeWidth: 1
+      },
+      labelStyle: {
+        fill: touchesSelected ? "#115e59" : "#667085",
+        fontSize: 12,
+        fontWeight: 800
+      }
+    };
+  });
+
+  return { nodes, edges, selectedPosition };
 }
 
 interface RelationshipExplorerGroup {

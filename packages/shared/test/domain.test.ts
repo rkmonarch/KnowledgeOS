@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { conceptDetailResponseSchema, relationshipTypeSchema } from "../src/domain.js";
+import {
+  conceptDetailResponseSchema,
+  graphNeighborhoodResponseSchema,
+  relationshipTypeSchema,
+  retryJobRequestSchema,
+  retryJobResponseSchema
+} from "../src/domain.js";
 
 describe("relationship domain schemas", () => {
   it("accepts the Phase 1 relationship vocabulary", () => {
@@ -45,6 +51,63 @@ describe("relationship domain schemas", () => {
       incoming: [],
       outgoing: [],
       unresolved: []
+    });
+  });
+
+  it("validates graph neighborhood responses", () => {
+    const parsed = graphNeighborhoodResponseSchema.parse({
+      workspaceId: "00000000-0000-4000-8000-000000000002",
+      selectedConceptId: "00000000-0000-4000-8000-000000000001",
+      depth: 1,
+      nodes: [
+        {
+          id: "00000000-0000-4000-8000-000000000001",
+          concept: {
+            id: "00000000-0000-4000-8000-000000000001",
+            slug: "authentication-service",
+            title: "Authentication Service",
+            type: "system"
+          },
+          distance: 0,
+          role: "selected",
+          relationshipCount: 1
+        }
+      ],
+      edges: [
+        {
+          id: "00000000-0000-4000-8000-000000000003",
+          sourceConceptId: "00000000-0000-4000-8000-000000000001",
+          targetConceptId: "00000000-0000-4000-8000-000000000004",
+          type: "uses",
+          label: "Uses",
+          description: "Authentication Service uses OAuth.",
+          confidence: 0.82,
+          citation: null
+        }
+      ]
+    });
+
+    expect(parsed.nodes[0]?.role).toBe("selected");
+    expect(parsed.edges[0]?.label).toBe("Uses");
+  });
+
+  it("validates retry job API contracts", () => {
+    expect(
+      retryJobRequestSchema.parse({
+        workspaceId: "00000000-0000-4000-8000-000000000002",
+        jobId: "00000000-0000-4000-8000-000000000003"
+      })
+    ).toEqual({
+      workspaceId: "00000000-0000-4000-8000-000000000002",
+      jobId: "00000000-0000-4000-8000-000000000003"
+    });
+
+    expect(
+      retryJobResponseSchema.parse({
+        jobId: "00000000-0000-4000-8000-000000000003"
+      })
+    ).toEqual({
+      jobId: "00000000-0000-4000-8000-000000000003"
     });
   });
 });

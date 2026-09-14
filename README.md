@@ -11,6 +11,7 @@ This repository is intentionally not a LangChain or LlamaIndex application. The 
 5. Persist concepts, claims, and citations.
 6. Embed concepts and claims into PostgreSQL with pgvector.
 7. Search concepts with natural language and return citations.
+8. Explore concept relationship neighborhoods in the dashboard graph view.
 
 ## Milestone One Scope
 
@@ -24,6 +25,7 @@ Included:
 - Markdown ingestion
 - source revisions and hashing
 - concept and claim extraction contracts
+- relationship extraction and graph-neighborhood browsing
 - deterministic fixture providers for local tests
 - Docker PostgreSQL
 - Vitest tests

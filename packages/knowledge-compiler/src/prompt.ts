@@ -5,6 +5,7 @@ export const extractionSystemPrompt = [
   "Return only valid JSON. Do not include markdown fences or commentary.",
   "Every claim must be supported by the supplied source section.",
   "Every relationship must be supported by the supplied source section.",
+  "Do not invent relationship types; use only the relationship type strings shown in outputShape.",
   "Use absolute source line numbers from the input metadata.",
   "Use realistic confidence scores between 0.6 and 0.95 for clear source-backed knowledge.",
   "Omit optional fields instead of setting them to null.",
@@ -40,7 +41,7 @@ export function buildExtractionPrompt(section: SourceSectionForExtraction): stri
             ],
             relationships: [
               {
-                type: "depends_on | used_by | uses | implements | part_of | related_to | replaces | contradicts | requires | produces | affects | mitigates | signed_by",
+                type: "depends_on | used_by | uses | implements | part_of | related_to | replaces | contradicts | requires | produces | affects | mitigates | signed_by | owned_by | documented_in",
                 targetTitle: "Related concept title",
                 targetSlug: "optional-related-concept-slug",
                 description: "Short explanation of the relationship grounded in the source",

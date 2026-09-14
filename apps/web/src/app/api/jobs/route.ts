@@ -1,5 +1,6 @@
 import { z } from "zod";
-import { errorResponse, jsonResponse } from "../_lib/http";
+import { retryJobRequestSchema } from "@knowledgeos/shared";
+import { errorResponse, jsonResponse, readJsonBody } from "../_lib/http";
 import { getKnowledgeOSRuntime } from "../_lib/runtime";
 
 export const runtime = "nodejs";
@@ -17,6 +18,19 @@ export async function GET(request: Request): Promise<Response> {
     const jobs = await runtimeContext.repository.listJobs(query.workspaceId, query.limit);
 
     return jsonResponse({ jobs });
+  } catch (error) {
+    return errorResponse(error);
+  }
+}
+
+export async function POST(request: Request): Promise<Response> {
+  try {
+    const body = await readJsonBody(request);
+    const input = retryJobRequestSchema.parse(body);
+    const runtimeContext = getKnowledgeOSRuntime();
+    const jobId = await runtimeContext.repository.retryFailedJob(input.workspaceId, input.jobId);
+
+    return jsonResponse({ jobId });
   } catch (error) {
     return errorResponse(error);
   }

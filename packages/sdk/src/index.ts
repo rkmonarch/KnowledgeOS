@@ -1,17 +1,22 @@
 import {
   type ConceptDetailResponse,
+  type GraphNeighborhoodResponse,
   type IngestMarkdownRequest,
   type IngestMarkdownResponse,
   type ListConceptsResponse,
   type ListJobsResponse,
+  type RetryJobRequest,
+  type RetryJobResponse,
   type SearchRequest,
   type SearchResponse,
   apiErrorResponseSchema,
   conceptDetailResponseSchema,
   defaultWorkspaceResponseSchema,
+  graphNeighborhoodResponseSchema,
   ingestMarkdownResponseSchema,
   listConceptsResponseSchema,
   listJobsResponseSchema,
+  retryJobResponseSchema,
   searchResponseSchema
 } from "@knowledgeos/shared/domain";
 import type { z } from "zod";
@@ -57,6 +62,25 @@ export class KnowledgeOSClient {
     });
   }
 
+  async getGraphNeighborhood(input: {
+    workspaceId: string;
+    conceptId: string;
+    depth?: number;
+    limit?: number;
+  }): Promise<GraphNeighborhoodResponse> {
+    const searchParams = new URLSearchParams({
+      workspaceId: input.workspaceId,
+      conceptId: input.conceptId,
+      depth: String(input.depth ?? 1),
+      limit: String(input.limit ?? 80)
+    });
+
+    return this.request(`/graph/neighborhood?${searchParams.toString()}`, {
+      method: "GET",
+      schema: graphNeighborhoodResponseSchema
+    });
+  }
+
   async listJobs(workspaceId: string, limit = 50): Promise<ListJobsResponse> {
     const searchParams = new URLSearchParams({
       workspaceId,
@@ -66,6 +90,14 @@ export class KnowledgeOSClient {
     return this.request(`/jobs?${searchParams.toString()}`, {
       method: "GET",
       schema: listJobsResponseSchema
+    });
+  }
+
+  async retryJob(input: RetryJobRequest): Promise<RetryJobResponse> {
+    return this.request("/jobs", {
+      method: "POST",
+      body: input,
+      schema: retryJobResponseSchema
     });
   }
 
@@ -100,9 +132,11 @@ export class KnowledgeOSClient {
       ...(options.body ? { body: JSON.stringify(options.body) } : {})
     };
 
-    const response = await this.fetchImpl(`${this.baseUrl}${path}`, requestInit);
+    const requestUrl = `${this.baseUrl}${path}`;
+    const response = await this.fetchImpl(requestUrl, requestInit);
+    const responseText = await response.text();
+    const payload = parseJsonResponse(responseText, options.method, path, response.status);
 
-    const payload = (await response.json()) as unknown;
     if (!response.ok) {
       const parsedError = apiErrorResponseSchema.safeParse(payload);
       if (parsedError.success) {
@@ -112,6 +146,17 @@ export class KnowledgeOSClient {
     }
 
     return options.schema.parse(payload);
+  }
+}
+
+function parseJsonResponse(responseText: string, method: string, path: string, status: number): unknown {
+  try {
+    return JSON.parse(responseText) as unknown;
+  } catch (error) {
+    const detail = responseText.trim().slice(0, 80).replace(/\s+/g, " ");
+    throw new Error(
+      `${method} ${path} returned non-JSON response (${status})${detail.length > 0 ? `: ${detail}` : ""}`
+    );
   }
 }
 
