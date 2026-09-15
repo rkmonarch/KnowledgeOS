@@ -14,7 +14,8 @@ import {
   RefreshCw,
   Search,
   Send,
-  UploadCloud
+  UploadCloud,
+  X
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -35,6 +36,7 @@ import type {
   ConceptDetailResponse,
   ConceptRecord,
   ConceptType,
+  GraphEdge,
   GraphNeighborhoodResponse,
   GraphNodeRole,
   JobRecord,
@@ -569,6 +571,19 @@ function KnowledgeGraphPanel({
 }>) {
   const nodeCount = graph?.nodes.length ?? 0;
   const edgeCount = graph?.edges.length ?? 0;
+  const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
+  const selectedEdge = useMemo(() => {
+    if (!graph || !selectedEdgeId) {
+      return null;
+    }
+    return buildGraphEvidence(graph, selectedEdgeId);
+  }, [graph, selectedEdgeId]);
+
+  useEffect(() => {
+    if (!graph || !selectedEdgeId || !graph.edges.some((edge) => edge.id === selectedEdgeId)) {
+      setSelectedEdgeId(null);
+    }
+  }, [graph, selectedEdgeId]);
 
   return (
     <section className="surface graphSurface">
@@ -624,7 +639,15 @@ function KnowledgeGraphPanel({
           </div>
         ) : (
           <ReactFlowProvider>
-            <KnowledgeGraphCanvas graph={graph} onSelectConcept={onSelectConcept} />
+            <KnowledgeGraphCanvas
+              graph={graph}
+              selectedEdgeId={selectedEdgeId}
+              onSelectConcept={(conceptId) => {
+                setSelectedEdgeId(null);
+                onSelectConcept(conceptId);
+              }}
+              onSelectEdge={setSelectedEdgeId}
+            />
           </ReactFlowProvider>
         )}
         {!isLoading && !error && graph && graph.nodes.length === 1 && graph.edges.length === 0 ? (
@@ -633,6 +656,7 @@ function KnowledgeGraphPanel({
             <span>No resolved relationships for this concept yet</span>
           </div>
         ) : null}
+        {selectedEdge ? <GraphEvidenceDrawer evidence={selectedEdge} onClose={() => setSelectedEdgeId(null)} /> : null}
       </div>
     </section>
   );
@@ -651,12 +675,16 @@ interface ConceptFlowNodeData extends Record<string, unknown> {
 
 function KnowledgeGraphCanvas({
   graph,
-  onSelectConcept
+  selectedEdgeId,
+  onSelectConcept,
+  onSelectEdge
 }: Readonly<{
   graph: GraphNeighborhoodResponse;
+  selectedEdgeId: string | null;
   onSelectConcept: (conceptId: string) => void;
+  onSelectEdge: (edgeId: string | null) => void;
 }>) {
-  const { nodes, edges, selectedPosition } = useMemo(() => buildFlowGraph(graph), [graph]);
+  const { nodes, edges, selectedPosition } = useMemo(() => buildFlowGraph(graph, selectedEdgeId), [graph, selectedEdgeId]);
 
   return (
     <div className="graphCanvas">
@@ -674,12 +702,71 @@ function KnowledgeGraphCanvas({
         nodesConnectable={false}
         edgesFocusable={false}
         onNodeClick={(_event, node) => onSelectConcept(node.id)}
+        onEdgeClick={(_event, edge) => onSelectEdge(edge.id)}
+        onPaneClick={() => onSelectEdge(null)}
         proOptions={{ hideAttribution: true }}
       >
         <Background color="#d9e0ea" gap={20} size={1} />
         <Controls position="bottom-right" showInteractive={false} />
       </ReactFlow>
     </div>
+  );
+}
+
+interface GraphEvidence {
+  edge: GraphEdge;
+  sourceTitle: string;
+  targetTitle: string;
+}
+
+function GraphEvidenceDrawer({
+  evidence,
+  onClose
+}: Readonly<{
+  evidence: GraphEvidence;
+  onClose: () => void;
+}>) {
+  const citation = evidence.edge.citation;
+
+  return (
+    <aside className="graphEvidenceDrawer" aria-label="Relationship evidence">
+      <div className="graphEvidenceHeader">
+        <div>
+          <span className="eyebrow">Relationship Evidence</span>
+          <h3>{evidence.edge.label}</h3>
+        </div>
+        <button className="secondaryIconButton" type="button" onClick={onClose} title="Close evidence">
+          <X size={15} />
+        </button>
+      </div>
+
+      <div className="graphEvidencePath">
+        <span>{evidence.sourceTitle}</span>
+        <ArrowRight size={15} />
+        <span>{evidence.targetTitle}</span>
+      </div>
+
+      {evidence.edge.description ? <p className="graphEvidenceDescription">{evidence.edge.description}</p> : null}
+
+      <div className="graphEvidenceMeta">
+        <span>{Math.round(evidence.edge.confidence * 100)}% confidence</span>
+        <span>{evidence.edge.type}</span>
+      </div>
+
+      {citation ? (
+        <div className="graphEvidenceCitation">
+          <span className="eyebrow">Citation</span>
+          <strong>{formatCitation(citation)}</strong>
+          {citation.headingPath.length > 0 ? <span>{citation.headingPath.join(" / ")}</span> : null}
+          {citation.quote ? <blockquote>{citation.quote}</blockquote> : null}
+        </div>
+      ) : (
+        <div className="emptyState compact">
+          <FileText size={17} />
+          <span>No citation stored for this relationship</span>
+        </div>
+      )}
+    </aside>
   );
 }
 
@@ -1092,7 +1179,7 @@ function classNames(...values: Array<string | null>): string {
   return values.filter(Boolean).join(" ");
 }
 
-function buildFlowGraph(graph: GraphNeighborhoodResponse): {
+function buildFlowGraph(graph: GraphNeighborhoodResponse, selectedEdgeId: string | null): {
   nodes: ConceptFlowNode[];
   edges: ConceptFlowEdge[];
   selectedPosition: { x: number; y: number };
@@ -1158,9 +1245,10 @@ function buildFlowGraph(graph: GraphNeighborhoodResponse): {
       },
       markerEnd: {
         type: MarkerType.ArrowClosed,
-        color: touchesSelected ? "#0f766e" : "#8a94a6"
+        color: edge.id === selectedEdgeId ? "#a16207" : touchesSelected ? "#0f766e" : "#8a94a6"
       },
-      className: touchesSelected ? "graphEdge active" : "graphEdge",
+      className: classNames("graphEdge", touchesSelected ? "active" : null, edge.id === selectedEdgeId ? "selected" : null),
+      selected: edge.id === selectedEdgeId,
       labelShowBg: true,
       labelBgPadding: [6, 3],
       labelBgBorderRadius: 5,
@@ -1170,7 +1258,7 @@ function buildFlowGraph(graph: GraphNeighborhoodResponse): {
         strokeWidth: 1
       },
       labelStyle: {
-        fill: touchesSelected ? "#115e59" : "#667085",
+        fill: edge.id === selectedEdgeId ? "#92400e" : touchesSelected ? "#115e59" : "#667085",
         fontSize: 12,
         fontWeight: 800
       }
@@ -1178,6 +1266,21 @@ function buildFlowGraph(graph: GraphNeighborhoodResponse): {
   });
 
   return { nodes, edges, selectedPosition };
+}
+
+function buildGraphEvidence(graph: GraphNeighborhoodResponse, edgeId: string): GraphEvidence | null {
+  const edge = graph.edges.find((item) => item.id === edgeId);
+  if (!edge) {
+    return null;
+  }
+
+  const nodesById = new Map(graph.nodes.map((node) => [node.id, node.concept.title]));
+
+  return {
+    edge,
+    sourceTitle: nodesById.get(edge.sourceConceptId) ?? "Source concept",
+    targetTitle: nodesById.get(edge.targetConceptId) ?? "Target concept"
+  };
 }
 
 interface RelationshipExplorerGroup {
